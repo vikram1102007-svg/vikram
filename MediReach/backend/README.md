@@ -49,3 +49,12 @@ Alembic manages the schema for both local SQLite and production PostgreSQL. Run 
 Set DATABASE_URL to managed PostgreSQL and CORS_ORIGINS to the exact frontend origin(s). Do not deploy with a SQLite file or use a demo database for real inventory. Configure HTTPS, managed secrets, backups, monitoring, rate limiting, and an authorised facility inventory source before a pilot.
 
 No real facilities or stock are fabricated by this API. Demo records are excluded from availability search by default. Feedback is a review signal and does not change stock. Do not store patient diagnoses, prescriptions, identity documents, or unnecessary sensitive health information. Users must confirm availability directly with the facility. MediReach does not diagnose, prescribe, or recommend medicine substitutions.
+
+## Facility audit history
+
+Authenticated facility staff can read their own inventory change history:
+
+- `GET /api/v1/facilities/me/audit?limit=50` — newest events first (maximum 100 per page).
+- Pass `before_id=<last-event-id>` to fetch the next older page.
+- The endpoint requires `X-Facility-Key` and scopes results to the facility resolved from that key. It does not accept a facility ID from the caller.
+- Each event includes the medicine, previous/new status and quantity, action, and timestamp. It is read-only; inventory changes still use the audited PUT endpoint.
