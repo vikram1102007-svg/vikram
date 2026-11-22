@@ -149,6 +149,40 @@ def test_facility_inventory_update_is_scoped_and_audited():
     db.close()
 
 
+
+def test_new_inventory_record_is_created_and_audited():
+    facility_id, medicine_id, record_id = setup_record()
+    db = TestingSession()
+    db.delete(db.get(InventoryRecord, record_id))
+    db.commit()
+    db.close()
+
+    token = "test-facility-key-for-new-record"
+    add_facility_key(facility_id, token)
+    response = client.put(
+        "/api/v1/facilities/me/inventory",
+        headers={"X-Facility-Key": token},
+        json={"medicine_id": medicine_id, "status": "available", "quantity": 12},
+    )
+    assert response.status_code == 200
+
+    db = TestingSession()
+    record = db.scalar(
+        select(InventoryRecord).where(
+            InventoryRecord.facility_id == facility_id,
+            InventoryRecord.medicine_id == medicine_id,
+        )
+    )
+    audit = db.scalar(
+        select(InventoryAuditLog).where(
+            InventoryAuditLog.inventory_record_id == record.id
+        )
+    )
+    assert record is not None and record.quantity == 12
+    assert audit is not None and audit.action == "created"
+    assert audit.previous_status is None and audit.previous_quantity is None
+    db.close()
+
 def test_facility_key_cannot_submit_another_facility_id():
     facility_id, medicine_id, _ = setup_record()
     token = "test-facility-key-only-for-tests"
