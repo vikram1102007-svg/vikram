@@ -11,6 +11,7 @@ python -m venv .venv
 pip install -r requirements.txt
 cp .env.example .env
 # For local development set DATABASE_URL=sqlite:///./medireach.db
+alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
@@ -41,8 +42,10 @@ python -m app.issue_facility_key --revoke-key-id 1
 
 A facility key cannot submit a facility ID; the API derives the facility scope from the key. Revoked keys and keys belonging to inactive facilities are rejected. Each inventory create/update writes an audit event with previous and new status/quantity.
 
-## Database and production deployment
+## Database migrations and production deployment
 
-Set DATABASE_URL to managed PostgreSQL and CORS_ORIGINS to the exact frontend origin(s). Do not deploy with a SQLite file or use a demo database for real inventory. The current `Base.metadata.create_all` call is a local-development convenience only; production schema changes must first be moved to reviewed Alembic migrations. Configure HTTPS, managed secrets, backups, monitoring, rate limiting, and an authorised facility inventory source before a pilot.
+Alembic manages the schema for both local SQLite and production PostgreSQL. Run `alembic upgrade head` before starting the API; the application does not create or modify tables automatically at startup. Check for model/migration drift with `alembic check` after applying migrations. Create new reviewed revisions with `alembic revision --autogenerate -m \"describe change\"`, inspect the generated SQL, and commit the revision. Never edit an already-applied migration; add a new revision instead.
+
+Set DATABASE_URL to managed PostgreSQL and CORS_ORIGINS to the exact frontend origin(s). Do not deploy with a SQLite file or use a demo database for real inventory. Configure HTTPS, managed secrets, backups, monitoring, rate limiting, and an authorised facility inventory source before a pilot.
 
 No real facilities or stock are fabricated by this API. Demo records are excluded from availability search by default. Feedback is a review signal and does not change stock. Do not store patient diagnoses, prescriptions, identity documents, or unnecessary sensitive health information. Users must confirm availability directly with the facility. MediReach does not diagnose, prescribe, or recommend medicine substitutions.
