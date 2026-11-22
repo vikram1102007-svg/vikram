@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from .config import get_settings
-from .database import Base, engine, get_db
+from .database import get_db
 from .models import (
     AvailabilityFeedback,
     Facility,
@@ -41,10 +41,6 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT"],
     allow_headers=["Content-Type", "X-Facility-Key"],
 )
-
-# Temporary local-development convenience. Production schema changes must use
-# reviewed Alembic migrations before the API is deployed against real data.
-Base.metadata.create_all(bind=engine)
 
 
 def freshness(verified_at: datetime) -> str:
