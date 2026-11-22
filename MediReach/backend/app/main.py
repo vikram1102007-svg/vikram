@@ -132,7 +132,6 @@ def search_availability(
 @app.put(
     "/api/v1/facilities/me/inventory",
     response_model=MessageOut,
-    dependencies=[Depends(require_facility_staff)],
     tags=["facility staff"],
 )
 def upsert_facility_inventory(
