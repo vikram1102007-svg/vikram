@@ -1,6 +1,8 @@
 from datetime import datetime
 from typing import Literal
-from pydantic import BaseModel, ConfigDict, Field
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
 
 class MedicineOut(BaseModel):
     id: int
@@ -8,6 +10,7 @@ class MedicineOut(BaseModel):
     strength: str | None = None
     form: str | None = None
     model_config = ConfigDict(from_attributes=True)
+
 
 class FacilityOut(BaseModel):
     id: int
@@ -17,23 +20,35 @@ class FacilityOut(BaseModel):
     phone: str | None = None
     model_config = ConfigDict(from_attributes=True)
 
+
 class InventoryUpsert(BaseModel):
-    facility_id: int = Field(gt=0)
     medicine_id: int = Field(gt=0)
     status: Literal["available", "low_stock", "unavailable", "not_reported"]
     quantity: int | None = Field(default=None, ge=0)
-    source: str = Field(default="facility_report", max_length=80)
-    is_demo: bool = False
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_stock_state(self):
+        if self.status == "not_reported" and self.quantity is not None:
+            raise ValueError("Quantity must be omitted when stock is not reported")
+        if self.status == "unavailable" and self.quantity not in (None, 0):
+            raise ValueError("Unavailable stock cannot have a positive quantity")
+        if self.status in ("available", "low_stock") and self.quantity == 0:
+            raise ValueError("Available or low stock cannot have a zero quantity")
+        return self
+
 
 class FeedbackCreate(BaseModel):
     inventory_record_id: int = Field(gt=0)
     outcome: Literal["received", "not_available"]
     comment: str | None = Field(default=None, max_length=500)
 
+
 class FeedbackOut(BaseModel):
     id: int
     review_required: bool
     model_config = ConfigDict(from_attributes=True)
+
 
 class AvailabilityOut(BaseModel):
     facility: FacilityOut
@@ -43,6 +58,7 @@ class AvailabilityOut(BaseModel):
     verified_at: datetime
     confidence: Literal["Recently Verified", "Needs Confirmation", "Outdated"]
     is_demo: bool
+
 
 class MessageOut(BaseModel):
     message: str

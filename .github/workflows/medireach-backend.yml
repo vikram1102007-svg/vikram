@@ -23,5 +23,7 @@ jobs:
           cache: pip
           cache-dependency-path: MediReach/backend/requirements.txt
       - run: pip install -r requirements.txt
-      - run: python -m compileall -q app tests
+      - run: python -m compileall -q app tests migrations
+      - run: alembic upgrade head
+      - run: alembic check
       - run: pytest -q
