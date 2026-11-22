@@ -1,8 +1,9 @@
 # MediReach FastAPI backend
 
-A production-oriented API foundation using FastAPI, SQLAlchemy 2, SQLite for local development, and PostgreSQL when DATABASE_URL is configured.
+A FastAPI API foundation using SQLAlchemy 2, SQLite for local tests/development, and PostgreSQL when DATABASE_URL is configured.
 
 ## Local run
+
 ```bash
 cd MediReach/backend
 python -m venv .venv
@@ -12,17 +13,36 @@ cp .env.example .env
 # For local development set DATABASE_URL=sqlite:///./medireach.db
 uvicorn app.main:app --reload
 ```
+
 API docs: http://127.0.0.1:8000/docs. Health: /health.
 
-## Endpoints
+## Public endpoints
+
 - GET /api/v1/medicines?q= — medicine catalogue
 - GET /api/v1/facilities?district= — active facilities
 - GET /api/v1/availability?medicine=&district=&include_demo=false — availability and server-calculated freshness
 - POST /api/v1/feedback — records a patient feedback review signal; never changes inventory
-- PUT /api/v1/admin/inventory — admin-only update using X-Admin-Key
 
-## Before production
-Set DATABASE_URL to managed PostgreSQL, ADMIN_API_KEY to a long random secret, and CORS_ORIGINS to the exact frontend origins. Do not use the example key. Add Alembic migrations, managed secrets, HTTPS, backups, monitoring, rate limiting, and an authorised facility inventory source. No real facilities or stock are fabricated by this API.
+## Facility staff inventory updates
 
-## Data safeguards
-Only authorised facility operators should update inventory. Feedback is a review signal and does not change stock. Demo records are excluded by default. Confirm availability with the facility. Do not store patient diagnoses, prescriptions, identity documents, or unnecessary sensitive health information.
+- PUT /api/v1/facilities/me/inventory — updates only the facility bound to the supplied X-Facility-Key credential.
+
+Facility keys are stored as SHA-256 hashes, never as plaintext. Generate a key from a trusted server/administrative shell after the facility has been provisioned:
+
+```bash
+python -m app.issue_facility_key --facility-id 1
+```
+
+The command prints the new key once. Store it in a managed secret store and provide it only to the authorised facility operator. To revoke a key:
+
+```bash
+python -m app.issue_facility_key --revoke-key-id 1
+```
+
+A facility key cannot submit a facility ID; the API derives the facility scope from the key. Revoked keys and keys belonging to inactive facilities are rejected. Each inventory create/update writes an audit event with previous and new status/quantity.
+
+## Database and production deployment
+
+Set DATABASE_URL to managed PostgreSQL and CORS_ORIGINS to the exact frontend origin(s). Do not deploy with a SQLite file or use a demo database for real inventory. The current `Base.metadata.create_all` call is a local-development convenience only; production schema changes must first be moved to reviewed Alembic migrations. Configure HTTPS, managed secrets, backups, monitoring, rate limiting, and an authorised facility inventory source before a pilot.
+
+No real facilities or stock are fabricated by this API. Demo records are excluded from availability search by default. Feedback is a review signal and does not change stock. Do not store patient diagnoses, prescriptions, identity documents, or unnecessary sensitive health information. Users must confirm availability directly with the facility. MediReach does not diagnose, prescribe, or recommend medicine substitutions.
