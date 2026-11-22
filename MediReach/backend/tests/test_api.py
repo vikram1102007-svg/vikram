@@ -300,6 +300,7 @@ def test_facility_audit_history_is_authenticated_scoped_and_paginated():
     db.add(facility_b)
     db.commit()
     db.refresh(facility_b)
+    facility_b_id = facility_b.id
     record_b = InventoryRecord(
         facility_id=facility_b.id,
         medicine_id=medicine_id,
@@ -316,7 +317,7 @@ def test_facility_audit_history_is_authenticated_scoped_and_paginated():
     token_a = "facility-a-audit-history-test-key"
     token_b = "facility-b-audit-history-test-key"
     add_facility_key(facility_a_id, token_a)
-    add_facility_key(facility_b.id, token_b)
+    add_facility_key(facility_b_id, token_b)
 
     update_a_one = client.put(
         "/api/v1/facilities/me/inventory",
