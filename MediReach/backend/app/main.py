@@ -20,6 +20,7 @@ from .schemas import (
     FeedbackOut,
     FacilityOut,
     InventoryUpsert,
+    InventoryAuditOut,
     MedicineOut,
     MessageOut,
 )
@@ -205,3 +206,48 @@ def submit_feedback(payload: FeedbackCreate, db: Session = Depends(get_db)):
     db.refresh(feedback)
     # Feedback never changes stock; it creates a review signal only.
     return feedback
+
+@app.get(
+    "/api/v1/facilities/me/audit",
+    response_model=list[InventoryAuditOut],
+    tags=["facility staff"],
+)
+def list_facility_audit_history(
+    staff: FacilityStaff = Depends(require_facility_staff),
+    limit: int = Query(default=50, ge=1, le=100),
+    before_id: int | None = Query(default=None, gt=0),
+    db: Session = Depends(get_db),
+):
+    """Return only the authenticated facility's inventory audit events."""
+    stmt = (
+        select(InventoryAuditLog, Medicine)
+        .join(
+            InventoryRecord,
+            InventoryAuditLog.inventory_record_id == InventoryRecord.id,
+        )
+        .join(Medicine, InventoryRecord.medicine_id == Medicine.id)
+        .where(
+            InventoryAuditLog.facility_id == staff.facility_id,
+            InventoryRecord.facility_id == staff.facility_id,
+        )
+        .order_by(InventoryAuditLog.id.desc())
+    )
+    if before_id is not None:
+        stmt = stmt.where(InventoryAuditLog.id < before_id)
+
+    rows = db.execute(stmt.limit(limit)).all()
+    return [
+        InventoryAuditOut(
+            id=audit.id,
+            inventory_record_id=audit.inventory_record_id,
+            medicine_name=medicine.name,
+            medicine_strength=medicine.strength,
+            action=audit.action,
+            previous_status=audit.previous_status,
+            new_status=audit.new_status,
+            previous_quantity=audit.previous_quantity,
+            new_quantity=audit.new_quantity,
+            changed_at=audit.changed_at,
+        )
+        for audit, medicine in rows
+    ]
