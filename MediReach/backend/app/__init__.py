@@ -1,0 +1,1 @@
+"""MediReach API application."""
