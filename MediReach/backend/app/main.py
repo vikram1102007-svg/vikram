@@ -1,0 +1,81 @@
+from datetime import datetime, timezone
+from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import select
+from sqlalchemy.orm import Session, joinedload
+from .config import get_settings
+from .database import Base, engine, get_db
+from .models import AvailabilityFeedback, Facility, InventoryRecord, Medicine
+from .schemas import AvailabilityOut, FeedbackCreate, FeedbackOut, FacilityOut, InventoryUpsert, MedicineOut, MessageOut
+from .security import require_admin
+
+settings = get_settings()
+app = FastAPI(title=settings.app_name, version="1.0.0", description="Medicine availability information API. Availability is informational and must be confirmed with the facility.")
+app.add_middleware(CORSMiddleware, allow_origins=settings.allowed_origins, allow_credentials=False, allow_methods=["GET", "POST", "PUT"], allow_headers=["Content-Type", "X-Admin-Key"])
+Base.metadata.create_all(bind=engine)
+
+def freshness(verified_at: datetime) -> str:
+    if verified_at.tzinfo is None:
+        verified_at = verified_at.replace(tzinfo=timezone.utc)
+    age_hours = max(0.0, (datetime.now(timezone.utc) - verified_at.astimezone(timezone.utc)).total_seconds() / 3600)
+    if age_hours <= 24:
+        return "Recently Verified"
+    if age_hours <= 72:
+        return "Needs Confirmation"
+    return "Outdated"
+
+@app.get("/health", response_model=MessageOut, tags=["system"])
+def health():
+    return {"message": "MediReach API is healthy"}
+
+@app.get("/api/v1/medicines", response_model=list[MedicineOut], tags=["catalog"])
+def list_medicines(q: str | None = Query(default=None, max_length=120), db: Session = Depends(get_db)):
+    stmt = select(Medicine).order_by(Medicine.name)
+    if q:
+        stmt = stmt.where(Medicine.name.ilike(f"%{q.strip()}%"))
+    return db.scalars(stmt.limit(100)).all()
+
+@app.get("/api/v1/facilities", response_model=list[FacilityOut], tags=["facilities"])
+def list_facilities(district: str | None = Query(default=None, max_length=100), db: Session = Depends(get_db)):
+    stmt = select(Facility).where(Facility.is_active.is_(True)).order_by(Facility.name)
+    if district:
+        stmt = stmt.where(Facility.district.ilike(f"%{district.strip()}%"))
+    return db.scalars(stmt.limit(100)).all()
+
+@app.get("/api/v1/availability", response_model=list[AvailabilityOut], tags=["availability"])
+def search_availability(medicine: str = Query(min_length=2, max_length=160), district: str | None = Query(default=None, max_length=100), include_demo: bool = Query(default=False), db: Session = Depends(get_db)):
+    stmt = select(InventoryRecord).options(joinedload(InventoryRecord.facility), joinedload(InventoryRecord.medicine)).join(Medicine).join(Facility).where(Medicine.name.ilike(f"%{medicine.strip()}%"), Facility.is_active.is_(True))
+    if district:
+        stmt = stmt.where(Facility.district.ilike(f"%{district.strip()}%"))
+    if not include_demo:
+        stmt = stmt.where(InventoryRecord.is_demo.is_(False))
+    records = db.scalars(stmt.order_by(InventoryRecord.verified_at.desc()).limit(100)).unique().all()
+    return [AvailabilityOut(facility=r.facility, medicine=r.medicine, status=r.status, quantity=r.quantity, verified_at=r.verified_at, confidence=freshness(r.verified_at), is_demo=r.is_demo) for r in records]
+
+@app.put("/api/v1/admin/inventory", response_model=MessageOut, dependencies=[Depends(require_admin)], tags=["admin"])
+def upsert_inventory(payload: InventoryUpsert, db: Session = Depends(get_db)):
+    if not db.get(Facility, payload.facility_id):
+        raise HTTPException(status_code=404, detail="Facility not found")
+    if not db.get(Medicine, payload.medicine_id):
+        raise HTTPException(status_code=404, detail="Medicine not found")
+    record = db.scalar(select(InventoryRecord).where(InventoryRecord.facility_id == payload.facility_id, InventoryRecord.medicine_id == payload.medicine_id))
+    if record is None:
+        record = InventoryRecord(facility_id=payload.facility_id, medicine_id=payload.medicine_id, status=payload.status, quantity=payload.quantity, source=payload.source, is_demo=payload.is_demo)
+        db.add(record)
+    else:
+        record.status, record.quantity, record.source, record.is_demo = payload.status, payload.quantity, payload.source, payload.is_demo
+        record.verified_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"message": "Inventory record saved"}
+
+@app.post("/api/v1/feedback", response_model=FeedbackOut, status_code=status.HTTP_201_CREATED, tags=["feedback"])
+def submit_feedback(payload: FeedbackCreate, db: Session = Depends(get_db)):
+    record = db.get(InventoryRecord, payload.inventory_record_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Availability record not found")
+    feedback = AvailabilityFeedback(inventory_record_id=record.id, outcome=payload.outcome, comment=payload.comment, review_required=True)
+    db.add(feedback)
+    db.commit()
+    db.refresh(feedback)
+    # Feedback never changes stock; it creates a review signal only.
+    return feedback
