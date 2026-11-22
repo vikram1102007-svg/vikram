@@ -286,3 +286,88 @@ def test_feedback_comment_length_is_limited():
         },
     )
     assert response.status_code == 422
+
+def test_facility_audit_history_is_authenticated_scoped_and_paginated():
+    facility_a_id, medicine_id, record_a_id = setup_record()
+
+    db = TestingSession()
+    facility_b = Facility(
+        name="Second Test PHC",
+        district="Other District",
+        address="Other test address",
+        is_active=True,
+    )
+    db.add(facility_b)
+    db.commit()
+    db.refresh(facility_b)
+    record_b = InventoryRecord(
+        facility_id=facility_b.id,
+        medicine_id=medicine_id,
+        status="available",
+        quantity=30,
+        verified_at=datetime.now(timezone.utc),
+        is_demo=False,
+    )
+    db.add(record_b)
+    db.commit()
+    record_b_id = record_b.id
+    db.close()
+
+    token_a = "facility-a-audit-history-test-key"
+    token_b = "facility-b-audit-history-test-key"
+    add_facility_key(facility_a_id, token_a)
+    add_facility_key(facility_b.id, token_b)
+
+    update_a_one = client.put(
+        "/api/v1/facilities/me/inventory",
+        headers={"X-Facility-Key": token_a},
+        json={"medicine_id": medicine_id, "status": "low_stock", "quantity": 8},
+    )
+    update_a_two = client.put(
+        "/api/v1/facilities/me/inventory",
+        headers={"X-Facility-Key": token_a},
+        json={"medicine_id": medicine_id, "status": "available", "quantity": 12},
+    )
+    update_b = client.put(
+        "/api/v1/facilities/me/inventory",
+        headers={"X-Facility-Key": token_b},
+        json={"medicine_id": medicine_id, "status": "low_stock", "quantity": 4},
+    )
+    assert update_a_one.status_code == 200
+    assert update_a_two.status_code == 200
+    assert update_b.status_code == 200
+
+    unauthorized = client.get("/api/v1/facilities/me/audit")
+    assert unauthorized.status_code == 401
+
+    first_page = client.get(
+        "/api/v1/facilities/me/audit",
+        headers={"X-Facility-Key": token_a},
+        params={"limit": 1},
+    )
+    assert first_page.status_code == 200
+    first_events = first_page.json()
+    assert len(first_events) == 1
+    assert first_events[0]["inventory_record_id"] == record_a_id
+    assert first_events[0]["medicine_name"] == "Paracetamol"
+    assert first_events[0]["previous_quantity"] == 8
+    assert first_events[0]["new_quantity"] == 12
+
+    second_page = client.get(
+        "/api/v1/facilities/me/audit",
+        headers={"X-Facility-Key": token_a},
+        params={"limit": 10, "before_id": first_events[0]["id"]},
+    )
+    assert second_page.status_code == 200
+    second_events = second_page.json()
+    assert len(second_events) == 1
+    assert second_events[0]["inventory_record_id"] == record_a_id
+    assert all(event["inventory_record_id"] != record_b_id for event in first_events + second_events)
+
+    facility_b_events = client.get(
+        "/api/v1/facilities/me/audit",
+        headers={"X-Facility-Key": token_b},
+    )
+    assert facility_b_events.status_code == 200
+    assert len(facility_b_events.json()) == 1
+    assert facility_b_events.json()[0]["inventory_record_id"] == record_b_id
