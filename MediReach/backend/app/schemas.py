@@ -62,3 +62,15 @@ class AvailabilityOut(BaseModel):
 
 class MessageOut(BaseModel):
     message: str
+
+class InventoryAuditOut(BaseModel):
+    id: int
+    inventory_record_id: int
+    medicine_name: str
+    medicine_strength: str | None = None
+    action: Literal["created", "updated"]
+    previous_status: str | None = None
+    new_status: str
+    previous_quantity: int | None = None
+    new_quantity: int | None = None
+    changed_at: datetime
