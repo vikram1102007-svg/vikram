@@ -229,3 +229,60 @@ def test_freshness_thresholds():
     assert freshness(now - timedelta(hours=23, minutes=59)) == "Recently Verified"
     assert freshness(now - timedelta(hours=48)) == "Needs Confirmation"
     assert freshness(now - timedelta(hours=73)) == "Outdated"
+
+def test_facility_key_is_stored_as_hash_not_plaintext():
+    facility_id, _, _ = setup_record()
+    token = "high-entropy-test-token-never-store-plaintext"
+    add_facility_key(facility_id, token)
+
+    db = TestingSession()
+    key = db.scalar(
+        select(FacilityAccessKey).where(
+            FacilityAccessKey.facility_id == facility_id
+        )
+    )
+    assert key is not None
+    assert key.key_hash == hashlib.sha256(token.encode("utf-8")).hexdigest()
+    assert key.key_hash != token
+    db.close()
+
+
+def test_inactive_facility_key_is_rejected():
+    facility_id, medicine_id, _ = setup_record()
+    token = "key-for-inactive-facility-test"
+    add_facility_key(facility_id, token)
+
+    db = TestingSession()
+    facility = db.get(Facility, facility_id)
+    facility.is_active = False
+    db.commit()
+    db.close()
+
+    response = client.put(
+        "/api/v1/facilities/me/inventory",
+        headers={"X-Facility-Key": token},
+        json={"medicine_id": medicine_id, "status": "available", "quantity": 5},
+    )
+    assert response.status_code == 401
+
+
+def test_feedback_for_unknown_inventory_record_is_rejected():
+    setup_record()
+    response = client.post(
+        "/api/v1/feedback",
+        json={"inventory_record_id": 999999, "outcome": "not_available"},
+    )
+    assert response.status_code == 404
+
+
+def test_feedback_comment_length_is_limited():
+    _, _, record_id = setup_record()
+    response = client.post(
+        "/api/v1/feedback",
+        json={
+            "inventory_record_id": record_id,
+            "outcome": "received",
+            "comment": "x" * 501,
+        },
+    )
+    assert response.status_code == 422
