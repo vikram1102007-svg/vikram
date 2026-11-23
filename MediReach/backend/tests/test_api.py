@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -83,6 +84,66 @@ def add_facility_key(facility_id: int, token: str, revoked: bool = False):
 
 def test_health():
     assert client.get("/health").status_code == 200
+
+
+def test_readiness_confirms_database_connectivity():
+    response = client.get("/health/ready")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready"}
+
+
+def test_readiness_returns_generic_503_when_database_is_unavailable():
+    class UnavailableSession:
+        def execute(self, statement):
+            raise OperationalError(
+                str(statement),
+                {},
+                RuntimeError("postgres://user:secret@database/medireach"),
+            )
+
+    def unavailable_db():
+        yield UnavailableSession()
+
+    app.dependency_overrides[get_db] = unavailable_db
+    try:
+        response = client.get("/health/ready")
+    finally:
+        app.dependency_overrides[get_db] = override_db
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Database is unavailable"}
+    assert "secret" not in response.text
+
+
+def test_liveness_does_not_depend_on_database():
+    def unavailable_db():
+        raise OperationalError(
+            "connect",
+            {},
+            RuntimeError("database unavailable"),
+        )
+        yield
+
+    app.dependency_overrides[get_db] = unavailable_db
+    try:
+        response = client.get("/health")
+    finally:
+        app.dependency_overrides[get_db] = override_db
+
+    assert response.status_code == 200
+
+
+def test_feedback_rejects_unexpected_fields():
+    _, _, record_id = setup_record()
+    response = client.post(
+        "/api/v1/feedback",
+        json={
+            "inventory_record_id": record_id,
+            "outcome": "received",
+            "facility_id": 999,
+        },
+    )
+    assert response.status_code == 422
 
 
 def test_availability_search_returns_freshness():
