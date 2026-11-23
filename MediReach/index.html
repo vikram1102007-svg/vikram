@@ -1,1 +1,91 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MediReach</title><link rel="stylesheet" href="styles.css"></head><body><header><a class="logo" href="#">✚ MediReach</a><nav><a href="#lookup">Find medicine</a><a href="#about">How it works</a><button id="lang">தமிழ்</button></nav></header><main><section class="hero"><p>PUBLIC HEALTH ACCESS</p><h1>Check availability before you travel.</h1><p>Find health centres and see when medicine information was last verified.</p><a class="cta" href="#lookup">Search medicines →</a></section><section id="lookup"><p class="eyebrow">MEDICINE LOOKUP · DEMO DATA</p><h2>Search sample facilities</h2><form id="form"><input id="q" placeholder="e.g. Paracetamol 500 mg" required><button>Search</button></form><div class="chips"><button type="button" data-q="Paracetamol 500 mg">Paracetamol</button><button type="button" data-q="ORS sachet">ORS sachet</button><button type="button" data-q="Cetirizine 10 mg">Cetirizine</button><button type="button" data-q="Metformin 500 mg">Metformin</button></div><p id="meta" aria-live="polite"></p><div id="results"></div></section><section id="about"><h2>Know how fresh the information is</h2><div class="steps"><article><b>01 · Search</b><p>Find a medicine in sample facility records.</p></article><article><b>02 · Check freshness</b><p>Labels are calculated from the last verification timestamp.</p></article><article><b>03 · Confirm</b><p>Call the facility before travelling. Stock can change.</p></article></div></section><aside><b>Important:</b> This demo uses fictional facilities, addresses and stock. It is not connected to government inventory systems. Do not rely on this sample data for healthcare or travel decisions. MediReach does not diagnose, prescribe or recommend substitutions.</aside></main><footer>© 2026 MediReach · Public-health information demo</footer><script src="app.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="MediReach helps people check medicine availability information and verification freshness.">
+  <meta name="medireach-api-base" content="">
+  <title>MediReach — Medicine availability information</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#lookup">Skip to medicine search</a>
+  <header class="site-header">
+    <a class="logo" href="#" aria-label="MediReach home">✚ MediReach</a>
+    <nav aria-label="Main navigation">
+      <a href="#lookup" data-i18n="navFind">Find medicine</a>
+      <a href="#about" data-i18n="navAbout">How it works</a>
+      <button id="language-toggle" class="language-toggle" type="button" aria-label="Switch language">தமிழ்</button>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <p class="eyebrow" data-i18n="heroEyebrow">PUBLIC HEALTH ACCESS</p>
+      <h1 data-i18n="heroTitle">Check availability before you travel.</h1>
+      <p data-i18n="heroText">Search medicine records and see when each record was last verified.</p>
+      <a class="cta" href="#lookup" data-i18n="searchCta">Search medicines</a>
+    </section>
+
+    <section id="lookup" class="lookup-section" aria-labelledby="lookup-title">
+      <p class="eyebrow" data-i18n="lookupEyebrow">MEDICINE LOOKUP</p>
+      <h2 id="lookup-title" data-i18n="lookupTitle">Search medicine availability</h2>
+      <form id="search-form" novalidate>
+        <div class="field">
+          <label for="medicine" data-i18n="medicineLabel">Medicine name</label>
+          <input id="medicine" name="medicine" type="search" minlength="2" maxlength="160"
+            placeholder="e.g. Paracetamol 500 mg" autocomplete="off" required>
+        </div>
+        <div class="field">
+          <label for="district" data-i18n="districtLabel">District (optional)</label>
+          <input id="district" name="district" type="text" maxlength="100"
+            placeholder="e.g. Coimbatore" autocomplete="off">
+        </div>
+        <button id="search-button" class="primary-button" type="submit" data-i18n="searchButton">Search</button>
+      </form>
+
+      <p class="sample-heading" data-i18n="sampleSearches">Try a sample search</p>
+      <div class="chips" aria-label="Sample medicine searches">
+        <button type="button" data-q="Paracetamol 500 mg">Paracetamol</button>
+        <button type="button" data-q="ORS sachet">ORS sachet</button>
+        <button type="button" data-q="Cetirizine 10 mg">Cetirizine</button>
+        <button type="button" data-q="Metformin 500 mg">Metformin</button>
+      </div>
+
+      <p id="mode-note" class="mode-note" role="status" aria-live="polite"></p>
+      <p id="search-status" class="search-status" role="status" aria-live="polite"></p>
+      <div id="results" class="results" aria-live="polite" aria-busy="false"></div>
+    </section>
+
+    <section id="about" class="about-section" aria-labelledby="about-title">
+      <h2 id="about-title" data-i18n="aboutTitle">Understand information freshness</h2>
+      <div class="steps">
+        <article>
+          <b data-i18n="step1Title">Search</b>
+          <p data-i18n="step1Text">Search by medicine name and optional district.</p>
+        </article>
+        <article>
+          <b data-i18n="step2Title">Check freshness</b>
+          <p data-i18n="step2Text">Confidence labels are calculated from the last verification time.</p>
+        </article>
+        <article>
+          <b data-i18n="step3Title">Confirm</b>
+          <p data-i18n="step3Text">Contact the facility to confirm stock before travelling.</p>
+        </article>
+      </div>
+    </section>
+
+    <aside class="safety-notice" role="note">
+      <strong data-i18n="disclaimerTitle">Important safety notice</strong>
+      <p data-i18n="disclaimerText">This demo uses fictional facilities, addresses, medicine stock and verification times. It is not connected to government inventory systems or live facility records. Do not rely on sample data for healthcare or travel decisions. Availability can change. MediReach does not diagnose, prescribe or recommend medicine substitutions. Do not enter personal health information.</p>
+    </aside>
+  </main>
+
+  <footer data-i18n="footer">MediReach · Public-health information demo</footer>
+
+  <script src="freshness.js"></script>
+  <script src="locales.js"></script>
+  <script src="api.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
