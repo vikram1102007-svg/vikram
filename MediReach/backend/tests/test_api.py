@@ -312,12 +312,13 @@ def test_facility_feedback_review_queue_is_authenticated_scoped_and_paginated():
     db.add(record_b)
     db.commit()
     record_b_id = record_b.id
+    facility_b_id = facility_b.id
     db.close()
 
     token_a = "facility-a-feedback-review-test-key"
     token_b = "facility-b-feedback-review-test-key"
     add_facility_key(facility_a_id, token_a)
-    add_facility_key(facility_b.id, token_b)
+    add_facility_key(facility_b_id, token_b)
 
     older_feedback = client.post(
         "/api/v1/feedback",
@@ -331,20 +332,25 @@ def test_facility_feedback_review_queue_is_authenticated_scoped_and_paginated():
         "/api/v1/feedback",
         json={"inventory_record_id": record_a_id, "outcome": "received"},
     )
+    reviewed_feedback = client.post(
+        "/api/v1/feedback",
+        json={"inventory_record_id": record_a_id, "outcome": "received"},
+    )
     other_facility_feedback = client.post(
         "/api/v1/feedback",
         json={"inventory_record_id": record_b_id, "outcome": "not_available"},
     )
     assert older_feedback.status_code == 201
     assert newer_feedback.status_code == 201
+    assert reviewed_feedback.status_code == 201
     assert other_facility_feedback.status_code == 201
 
     unauthenticated = client.get("/api/v1/facilities/me/feedback")
     assert unauthenticated.status_code == 401
 
     db = TestingSession()
-    old_signal = db.get(AvailabilityFeedback, older_feedback.json()["id"])
-    old_signal.review_required = False
+    reviewed_signal = db.get(AvailabilityFeedback, reviewed_feedback.json()["id"])
+    reviewed_signal.review_required = False
     db.commit()
     db.close()
 
@@ -368,7 +374,9 @@ def test_facility_feedback_review_queue_is_authenticated_scoped_and_paginated():
         params={"limit": 10, "before_id": first_events[0]["id"]},
     )
     assert second_page.status_code == 200
-    assert second_page.json() == []
+    assert len(second_page.json()) == 1
+    assert second_page.json()[0]["id"] == older_feedback.json()["id"]
+    assert second_page.json()[0]["inventory_record_id"] == record_a_id
 
     facility_b_queue = client.get(
         "/api/v1/facilities/me/feedback",
