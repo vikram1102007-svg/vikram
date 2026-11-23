@@ -1,8 +1,11 @@
 import hashlib
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -86,10 +89,55 @@ def test_health():
     assert client.get("/health").status_code == 200
 
 
-def test_readiness_confirms_database_connectivity():
+def expected_migration_head():
+    backend_dir = Path(__file__).resolve().parents[1]
+    config = Config()
+    config.set_main_option("script_location", str(backend_dir / "migrations"))
+    heads = ScriptDirectory.from_config(config).get_heads()
+    assert len(heads) == 1
+    return heads[0]
+
+
+def set_test_migration_revision(revision: str | None):
+    db = TestingSession()
+    db.execute(
+        text(
+            "CREATE TABLE IF NOT EXISTS alembic_version "
+            "(version_num VARCHAR(32) NOT NULL)"
+        )
+    )
+    db.execute(text("DELETE FROM alembic_version"))
+    if revision is not None:
+        db.execute(
+            text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
+            {"revision": revision},
+        )
+    db.commit()
+    db.close()
+
+
+def test_readiness_confirms_database_connectivity_and_current_migrations():
+    set_test_migration_revision(expected_migration_head())
     response = client.get("/health/ready")
     assert response.status_code == 200
     assert response.json() == {"status": "ready"}
+
+
+def test_readiness_rejects_an_outdated_migration_revision():
+    set_test_migration_revision("older_unapplied_revision")
+    response = client.get("/health/ready")
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Database schema is not up to date"}
+
+
+def test_readiness_rejects_a_database_without_migration_history():
+    db = TestingSession()
+    db.execute(text("DROP TABLE IF EXISTS alembic_version"))
+    db.commit()
+    db.close()
+    response = client.get("/health/ready")
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Database schema is not up to date"}
 
 
 def test_readiness_returns_generic_503_when_database_is_unavailable():
@@ -347,3 +395,11 @@ def test_feedback_comment_length_is_limited():
         },
     )
     assert response.status_code == 422
+
+
+def test_container_runs_as_non_root_and_contains_migration_assets():
+    dockerfile = Path(__file__).resolve().parents[1] / "Dockerfile"
+    content = dockerfile.read_text(encoding="utf-8")
+    assert "COPY migrations ./migrations" in content
+    assert "COPY alembic.ini ./alembic.ini" in content
+    assert "USER app" in content
