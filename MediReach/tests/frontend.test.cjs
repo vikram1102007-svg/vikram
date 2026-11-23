@@ -42,6 +42,7 @@ test("remote API URLs require HTTPS and must not contain credentials", () => {
   assert.equal(api.normalizeApiBase("http://localhost:8000").url, "http://localhost:8000");
   assert.ok(api.normalizeApiBase("http://api.example.org").error);
   assert.ok(api.normalizeApiBase("https://user:pass@api.example.org").error);
+  assert.ok(api.normalizeApiBase("https://api.example.org/v1").error);
 });
 
 test("availability URL safely encodes medicine and district parameters", () => {
