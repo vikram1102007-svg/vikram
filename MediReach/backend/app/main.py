@@ -199,6 +199,14 @@ def submit_feedback(payload: FeedbackCreate, db: Session = Depends(get_db)):
             status_code=status.HTTP_409_CONFLICT,
             detail="Feedback is unavailable for fictional demo records",
         )
+
+    facility = db.get(Facility, record.facility_id)
+    if facility is None or not facility.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Feedback is unavailable for inactive facilities",
+        )
+
     feedback = AvailabilityFeedback(
         inventory_record_id=record.id,
         outcome=payload.outcome,
