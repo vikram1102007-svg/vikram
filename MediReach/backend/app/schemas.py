@@ -42,6 +42,7 @@ class FeedbackCreate(BaseModel):
     inventory_record_id: int = Field(gt=0)
     outcome: Literal["received", "not_available"]
     comment: str | None = Field(default=None, max_length=500)
+    model_config = ConfigDict(extra="forbid")
 
 
 class FeedbackOut(BaseModel):
@@ -62,3 +63,7 @@ class AvailabilityOut(BaseModel):
 
 class MessageOut(BaseModel):
     message: str
+
+
+class HealthOut(BaseModel):
+    status: Literal["ready"]
