@@ -160,6 +160,11 @@ def upsert_facility_inventory(
         previous_status = None
         previous_quantity = None
     else:
+        if record.is_demo:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Fictional demo inventory must be replaced by an administrator before staff updates",
+            )
         action = "updated"
         previous_status = record.status
         previous_quantity = record.quantity
