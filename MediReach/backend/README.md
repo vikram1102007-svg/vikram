@@ -27,6 +27,7 @@ API docs: http://127.0.0.1:8000/docs. Health: /health.
 ## Facility staff inventory updates
 
 - PUT /api/v1/facilities/me/inventory — updates only the facility bound to the supplied X-Facility-Key credential.
+- GET /api/v1/facilities/me/feedback?limit=50 — authenticated, facility-scoped pending feedback review queue; supports `before_id` pagination and omits free-text comments from staff responses.
 
 Facility keys are stored as SHA-256 hashes, never as plaintext. Generate a key from a trusted server/administrative shell after the facility has been provisioned:
 
