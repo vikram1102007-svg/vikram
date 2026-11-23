@@ -18,7 +18,7 @@ uvicorn app.main:app --reload
 API docs: http://127.0.0.1:8000/docs.
 
 - `GET /health` is a liveness probe and does not require the database.
-- `GET /health/ready` executes `SELECT 1` against the configured database. It returns HTTP 503 with a generic message if the database is unavailable; it never exposes connection details. This confirms connectivity only, not that migrations have been applied.
+- `GET /health/ready` executes `SELECT 1` and verifies that the database's Alembic revision matches every migration head packaged with the API. It returns HTTP 503 if the database is unavailable, has not been migrated, or is behind/ahead of the packaged migration graph. It never exposes connection details. Run reviewed migrations as a release step before routing traffic to the new API version.
 
 ## Public endpoints
 
@@ -47,7 +47,7 @@ A facility key cannot submit a facility ID; the API derives the facility scope f
 
 ## Container image
 
-The backend image includes the application, Alembic configuration, and migration scripts so migrations can be run from the same image:
+The backend image includes the application, Alembic configuration, and migration scripts so migrations can be run from the same image. The API runs as an unprivileged `app` user:
 
 ```bash
 docker build -t medireach-api .
