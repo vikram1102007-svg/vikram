@@ -194,6 +194,11 @@ def submit_feedback(payload: FeedbackCreate, db: Session = Depends(get_db)):
     record = db.get(InventoryRecord, payload.inventory_record_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Availability record not found")
+    if record.is_demo:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Feedback is unavailable for fictional demo records",
+        )
     feedback = AvailabilityFeedback(
         inventory_record_id=record.id,
         outcome=payload.outcome,
