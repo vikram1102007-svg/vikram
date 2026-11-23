@@ -344,3 +344,38 @@ def test_feedback_for_inactive_facility_is_rejected_without_mutation():
     assert record.quantity == 20
     assert feedback is None
     db.close()
+
+
+def test_facility_staff_cannot_overwrite_fictional_demo_inventory():
+    facility_id, medicine_id, record_id = setup_record()
+    token = "staff-key-for-demo-inventory-protection"
+    add_facility_key(facility_id, token)
+
+    db = TestingSession()
+    record = db.get(InventoryRecord, record_id)
+    record.is_demo = True
+    db.commit()
+    db.close()
+
+    response = client.put(
+        "/api/v1/facilities/me/inventory",
+        headers={"X-Facility-Key": token},
+        json={"medicine_id": medicine_id, "status": "low_stock", "quantity": 4},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "Fictional demo inventory must be replaced by an administrator before staff updates"
+    )
+
+    db = TestingSession()
+    record = db.get(InventoryRecord, record_id)
+    audit = db.scalar(
+        select(InventoryAuditLog).where(
+            InventoryAuditLog.inventory_record_id == record_id
+        )
+    )
+    assert record.is_demo is True
+    assert record.status == "available"
+    assert record.quantity == 20
+    assert audit is None
+    db.close()
