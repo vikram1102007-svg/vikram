@@ -18,6 +18,7 @@ from .schemas import (
     AvailabilityOut,
     FeedbackCreate,
     FeedbackOut,
+    FeedbackReviewOut,
     FacilityOut,
     InventoryUpsert,
     MedicineOut,
@@ -205,3 +206,47 @@ def submit_feedback(payload: FeedbackCreate, db: Session = Depends(get_db)):
     db.refresh(feedback)
     # Feedback never changes stock; it creates a review signal only.
     return feedback
+
+
+
+@app.get(
+    "/api/v1/facilities/me/feedback",
+    response_model=list[FeedbackReviewOut],
+    tags=["facility staff"],
+)
+def list_facility_feedback_review_queue(
+    staff: FacilityStaff = Depends(require_facility_staff),
+    limit: int = Query(default=50, ge=1, le=100),
+    before_id: int | None = Query(default=None, gt=0),
+    db: Session = Depends(get_db),
+):
+    """Return pending feedback signals for the authenticated facility only."""
+    stmt = (
+        select(AvailabilityFeedback, InventoryRecord, Medicine)
+        .join(
+            InventoryRecord,
+            AvailabilityFeedback.inventory_record_id == InventoryRecord.id,
+        )
+        .join(Medicine, InventoryRecord.medicine_id == Medicine.id)
+        .where(
+            InventoryRecord.facility_id == staff.facility_id,
+            AvailabilityFeedback.review_required.is_(True),
+        )
+        .order_by(AvailabilityFeedback.id.desc())
+    )
+    if before_id is not None:
+        stmt = stmt.where(AvailabilityFeedback.id < before_id)
+
+    rows = db.execute(stmt.limit(limit)).all()
+    return [
+        FeedbackReviewOut(
+            id=feedback.id,
+            inventory_record_id=record.id,
+            medicine_name=medicine.name,
+            medicine_strength=medicine.strength,
+            outcome=feedback.outcome,
+            created_at=feedback.created_at,
+            review_required=feedback.review_required,
+        )
+        for feedback, record, medicine in rows
+    ]
