@@ -286,3 +286,113 @@ def test_feedback_comment_length_is_limited():
         },
     )
     assert response.status_code == 422
+
+
+def test_facility_feedback_review_queue_is_authenticated_scoped_and_paginated():
+    facility_a_id, medicine_id, record_a_id = setup_record()
+
+    db = TestingSession()
+    facility_b = Facility(
+        name="Second Test PHC",
+        district="Other District",
+        address="Other test address",
+        is_active=True,
+    )
+    db.add(facility_b)
+    db.commit()
+    db.refresh(facility_b)
+    record_b = InventoryRecord(
+        facility_id=facility_b.id,
+        medicine_id=medicine_id,
+        status="available",
+        quantity=30,
+        verified_at=datetime.now(timezone.utc),
+        is_demo=False,
+    )
+    db.add(record_b)
+    db.commit()
+    record_b_id = record_b.id
+    db.close()
+
+    token_a = "facility-a-feedback-review-test-key"
+    token_b = "facility-b-feedback-review-test-key"
+    add_facility_key(facility_a_id, token_a)
+    add_facility_key(facility_b.id, token_b)
+
+    older_feedback = client.post(
+        "/api/v1/feedback",
+        json={
+            "inventory_record_id": record_a_id,
+            "outcome": "not_available",
+            "comment": "This private free-text note must not be exposed in staff queue.",
+        },
+    )
+    newer_feedback = client.post(
+        "/api/v1/feedback",
+        json={"inventory_record_id": record_a_id, "outcome": "received"},
+    )
+    other_facility_feedback = client.post(
+        "/api/v1/feedback",
+        json={"inventory_record_id": record_b_id, "outcome": "not_available"},
+    )
+    assert older_feedback.status_code == 201
+    assert newer_feedback.status_code == 201
+    assert other_facility_feedback.status_code == 201
+
+    unauthenticated = client.get("/api/v1/facilities/me/feedback")
+    assert unauthenticated.status_code == 401
+
+    db = TestingSession()
+    old_signal = db.get(AvailabilityFeedback, older_feedback.json()["id"])
+    old_signal.review_required = False
+    db.commit()
+    db.close()
+
+    first_page = client.get(
+        "/api/v1/facilities/me/feedback",
+        headers={"X-Facility-Key": token_a},
+        params={"limit": 1},
+    )
+    assert first_page.status_code == 200
+    first_events = first_page.json()
+    assert len(first_events) == 1
+    assert first_events[0]["id"] == newer_feedback.json()["id"]
+    assert first_events[0]["inventory_record_id"] == record_a_id
+    assert first_events[0]["medicine_name"] == "Paracetamol"
+    assert first_events[0]["outcome"] == "received"
+    assert "comment" not in first_events[0]
+
+    second_page = client.get(
+        "/api/v1/facilities/me/feedback",
+        headers={"X-Facility-Key": token_a},
+        params={"limit": 10, "before_id": first_events[0]["id"]},
+    )
+    assert second_page.status_code == 200
+    assert second_page.json() == []
+
+    facility_b_queue = client.get(
+        "/api/v1/facilities/me/feedback",
+        headers={"X-Facility-Key": token_b},
+    )
+    assert facility_b_queue.status_code == 200
+    assert len(facility_b_queue.json()) == 1
+    assert facility_b_queue.json()[0]["inventory_record_id"] == record_b_id
+
+
+def test_facility_feedback_review_queue_rejects_invalid_pagination():
+    facility_id, _, _ = setup_record()
+    token = "facility-feedback-pagination-test-key"
+    add_facility_key(facility_id, token)
+
+    zero_limit = client.get(
+        "/api/v1/facilities/me/feedback",
+        headers={"X-Facility-Key": token},
+        params={"limit": 0},
+    )
+    zero_cursor = client.get(
+        "/api/v1/facilities/me/feedback",
+        headers={"X-Facility-Key": token},
+        params={"before_id": 0},
+    )
+    assert zero_limit.status_code == 422
+    assert zero_cursor.status_code == 422
