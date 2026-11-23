@@ -2,7 +2,8 @@ from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload
 
 from .config import get_settings
@@ -18,6 +19,7 @@ from .schemas import (
     AvailabilityOut,
     FeedbackCreate,
     FeedbackOut,
+    HealthOut,
     FacilityOut,
     InventoryUpsert,
     MedicineOut,
@@ -59,7 +61,21 @@ def freshness(verified_at: datetime) -> str:
 
 @app.get("/health", response_model=MessageOut, tags=["system"])
 def health():
+    """Liveness probe: confirms the API process is responding."""
     return {"message": "MediReach API is healthy"}
+
+
+@app.get("/health/ready", response_model=HealthOut, tags=["system"])
+def readiness(db: Session = Depends(get_db)):
+    """Readiness probe: confirms the configured database accepts a simple query."""
+    try:
+        db.execute(text("SELECT 1"))
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database is unavailable",
+        ) from exc
+    return {"status": "ready"}
 
 
 @app.get("/api/v1/medicines", response_model=list[MedicineOut], tags=["catalog"])
