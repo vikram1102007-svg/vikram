@@ -62,3 +62,13 @@ class AvailabilityOut(BaseModel):
 
 class MessageOut(BaseModel):
     message: str
+
+
+class FeedbackReviewOut(BaseModel):
+    id: int
+    inventory_record_id: int
+    medicine_name: str
+    medicine_strength: str | None = None
+    outcome: Literal["received", "not_available"]
+    created_at: datetime
+    review_required: bool
