@@ -63,6 +63,7 @@
   );
   let language = "en";
   let lastRecords = null;
+  let lastErrorKey = null;
   let searched = false;
 
   function messages() {
@@ -256,12 +257,12 @@
     elements.medicine.setCustomValidity("");
 
     if (apiConfig.error) {
-      elements.searchStatus.textContent = dictionary.apiConfigError;
-      showMessage(dictionary.apiConfigError, "error-message");
+      showError("apiConfigError");
       return;
     }
 
     searched = true;
+    lastErrorKey = null;
     elements.searchStatus.textContent = dictionary.loading;
     elements.results.replaceChildren();
     setBusy(true);
@@ -277,16 +278,26 @@
       lastRecords = records;
       renderRecords(records);
     } catch (_error) {
-      lastRecords = null;
-      elements.searchStatus.textContent = dictionary.searchError;
-      showMessage(dictionary.searchError, "error-message");
+      showError("searchError");
     } finally {
       setBusy(false);
     }
   }
 
+  function showError(messageKey) {
+    const message = messages()[messageKey];
+    lastErrorKey = messageKey;
+    lastRecords = null;
+    searched = true;
+    elements.searchStatus.textContent = message;
+    showMessage(message, "error-message");
+  }
+
   function renderInitialState() {
-    if (!searched) showMessage(messages().emptyInitial);
+    if (!searched) {
+      elements.searchStatus.textContent = "";
+      showMessage(messages().emptyInitial);
+    }
   }
 
   elements.form.addEventListener("submit", (event) => {
@@ -304,7 +315,9 @@
   elements.languageToggle.addEventListener("click", () => {
     language = language === "en" ? "ta" : "en";
     applyTranslations();
-    if (searched && lastRecords) {
+    if (lastErrorKey) {
+      showError(lastErrorKey);
+    } else if (searched && lastRecords) {
       renderRecords(lastRecords);
     } else {
       renderInitialState();
