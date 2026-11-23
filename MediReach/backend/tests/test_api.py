@@ -404,3 +404,28 @@ def test_facility_feedback_review_queue_rejects_invalid_pagination():
     )
     assert zero_limit.status_code == 422
     assert zero_cursor.status_code == 422
+
+
+def test_feedback_rejects_unexpected_fields():
+    _, _, record_id = setup_record()
+    response = client.post(
+        "/api/v1/feedback",
+        json={
+            "inventory_record_id": record_id,
+            "outcome": "received",
+            "facility_id": 999,
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_feedback_review_queue_enforces_maximum_page_size():
+    facility_id, _, _ = setup_record()
+    token = "facility-feedback-max-page-test-key"
+    add_facility_key(facility_id, token)
+    response = client.get(
+        "/api/v1/facilities/me/feedback",
+        headers={"X-Facility-Key": token},
+        params={"limit": 101},
+    )
+    assert response.status_code == 422
