@@ -57,9 +57,10 @@ def as_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
-def freshness(verified_at: datetime) -> str:
+def freshness(verified_at: datetime, now: datetime | None = None) -> str:
     timestamp = as_utc(verified_at)
-    age = datetime.now(timezone.utc) - timestamp
+    current_time = as_utc(now) if now is not None else datetime.now(timezone.utc)
+    age = current_time - timestamp
     if age < -CLOCK_SKEW_TOLERANCE:
         return "Needs Confirmation"
 
