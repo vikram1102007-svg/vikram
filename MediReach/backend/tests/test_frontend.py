@@ -18,3 +18,4 @@ def test_frontend_node_suite():
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
