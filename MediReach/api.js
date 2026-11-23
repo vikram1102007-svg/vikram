@@ -17,8 +17,8 @@
       if (parsed.protocol !== "https:" && !localHttp) {
         throw new Error("Use HTTPS for a remote API.");
       }
-      if (parsed.username || parsed.password || parsed.search || parsed.hash) {
-        throw new Error("The API base URL must not contain credentials, a query, or a fragment.");
+      if (parsed.pathname !== "/" || parsed.username || parsed.password || parsed.search || parsed.hash) {
+        throw new Error("Use an API origin only; do not include a path, credentials, query, or fragment.");
       }
       return {
         configured: true,
