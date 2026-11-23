@@ -50,3 +50,14 @@ Alembic manages the schema for both local SQLite and production PostgreSQL. Run 
 Set DATABASE_URL to managed PostgreSQL and CORS_ORIGINS to the exact frontend origin(s). Do not deploy with a SQLite file or use a demo database for real inventory. Configure HTTPS, managed secrets, backups, monitoring, rate limiting, and an authorised facility inventory source before a pilot.
 
 No real facilities or stock are fabricated by this API. Demo records are excluded from availability search by default. Feedback is a review signal and does not change stock. Do not store patient diagnoses, prescriptions, identity documents, or unnecessary sensitive health information. Users must confirm availability directly with the facility. MediReach does not diagnose, prescribe, or recommend medicine substitutions.
+
+## Acknowledging patient feedback
+
+Authenticated facility staff can mark a pending feedback signal as reviewed:
+
+- `PATCH /api/v1/facilities/me/feedback/{feedback_id}/review` requires `X-Facility-Key`.
+- The feedback record is selected through its inventory record and the facility bound to the key; another facility's feedback returns 404.
+- The first acknowledgement stores a UTC review timestamp and the access-key record that performed it. Repeated requests are idempotent and preserve the original acknowledgement.
+- Acknowledgement removes the signal from the pending review queue. It does not alter medicine status, quantity, or verification time.
+- Existing feedback rows remain valid after the additive migration; their review timestamp and reviewer are null until staff acknowledge them.
+

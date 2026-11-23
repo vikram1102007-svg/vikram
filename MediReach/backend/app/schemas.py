@@ -73,3 +73,9 @@ class FeedbackReviewOut(BaseModel):
     outcome: Literal["received", "not_available"]
     created_at: datetime
     review_required: bool
+
+
+class FeedbackReviewActionOut(BaseModel):
+    id: int
+    review_required: bool
+    reviewed_at: datetime | None = None

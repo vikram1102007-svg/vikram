@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Path, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
@@ -19,6 +19,7 @@ from .schemas import (
     FeedbackCreate,
     FeedbackOut,
     FeedbackReviewOut,
+    FeedbackReviewActionOut,
     FacilityOut,
     InventoryUpsert,
     MedicineOut,
@@ -39,7 +40,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
     allow_credentials=False,
-    allow_methods=["GET", "POST", "PUT"],
+    allow_methods=["GET", "POST", "PUT", "PATCH"],
     allow_headers=["Content-Type", "X-Facility-Key"],
 )
 
@@ -250,3 +251,46 @@ def list_facility_feedback_review_queue(
         )
         for feedback, record, medicine in rows
     ]
+
+@app.patch(
+    "/api/v1/facilities/me/feedback/{feedback_id}/review",
+    response_model=FeedbackReviewActionOut,
+    tags=["facility staff"],
+)
+def mark_facility_feedback_reviewed(
+    feedback_id: int = Path(gt=0),
+    staff: FacilityStaff = Depends(require_facility_staff),
+    db: Session = Depends(get_db),
+):
+    """Acknowledge one pending feedback signal for the authenticated facility.
+
+    This changes only the review state; it never changes medicine inventory.
+    Repeated requests are idempotent and preserve the first reviewer and timestamp.
+    """
+    feedback = db.scalar(
+        select(AvailabilityFeedback)
+        .join(
+            InventoryRecord,
+            AvailabilityFeedback.inventory_record_id == InventoryRecord.id,
+        )
+        .where(
+            AvailabilityFeedback.id == feedback_id,
+            InventoryRecord.facility_id == staff.facility_id,
+        )
+    )
+    if feedback is None:
+        raise HTTPException(status_code=404, detail="Feedback not found")
+
+    if feedback.review_required:
+        feedback.review_required = False
+        feedback.reviewed_at = datetime.now(timezone.utc)
+        feedback.reviewed_by_access_key_id = staff.access_key_id
+        db.commit()
+        db.refresh(feedback)
+
+    return FeedbackReviewActionOut(
+        id=feedback.id,
+        review_required=feedback.review_required,
+        reviewed_at=feedback.reviewed_at,
+    )
+

@@ -429,3 +429,121 @@ def test_feedback_review_queue_enforces_maximum_page_size():
         params={"limit": 101},
     )
     assert response.status_code == 422
+
+def test_feedback_review_is_authenticated_facility_scoped_and_audited():
+    facility_a_id, medicine_id, record_a_id = setup_record()
+
+    db = TestingSession()
+    facility_b = Facility(
+        name="Second Test PHC",
+        district="Other District",
+        address="Other test address",
+        is_active=True,
+    )
+    db.add(facility_b)
+    db.commit()
+    db.refresh(facility_b)
+    facility_b_id = facility_b.id
+    record_b = InventoryRecord(
+        facility_id=facility_b_id,
+        medicine_id=medicine_id,
+        status="available",
+        quantity=30,
+        verified_at=datetime.now(timezone.utc),
+        is_demo=False,
+    )
+    db.add(record_b)
+    db.commit()
+    record_b_id = record_b.id
+    db.close()
+
+    token_a = "facility-a-feedback-review-action-test-key"
+    token_b = "facility-b-feedback-review-action-test-key"
+    add_facility_key(facility_a_id, token_a)
+    add_facility_key(facility_b_id, token_b)
+
+    feedback_a = client.post(
+        "/api/v1/feedback",
+        json={"inventory_record_id": record_a_id, "outcome": "not_available"},
+    )
+    feedback_b = client.post(
+        "/api/v1/feedback",
+        json={"inventory_record_id": record_b_id, "outcome": "received"},
+    )
+    assert feedback_a.status_code == 201
+    assert feedback_b.status_code == 201
+    feedback_a_id = feedback_a.json()["id"]
+    feedback_b_id = feedback_b.json()["id"]
+
+    unauthenticated = client.patch(
+        f"/api/v1/facilities/me/feedback/{feedback_a_id}/review"
+    )
+    assert unauthenticated.status_code == 401
+
+    cross_facility = client.patch(
+        f"/api/v1/facilities/me/feedback/{feedback_b_id}/review",
+        headers={"X-Facility-Key": token_a},
+    )
+    assert cross_facility.status_code == 404
+
+    reviewed = client.patch(
+        f"/api/v1/facilities/me/feedback/{feedback_a_id}/review",
+        headers={"X-Facility-Key": token_a},
+    )
+    assert reviewed.status_code == 200
+    body = reviewed.json()
+    assert body["id"] == feedback_a_id
+    assert body["review_required"] is False
+    assert body["reviewed_at"] is not None
+    first_reviewed_at = body["reviewed_at"]
+
+    db = TestingSession()
+    feedback_row = db.get(AvailabilityFeedback, feedback_a_id)
+    record_row = db.get(InventoryRecord, record_a_id)
+    reviewer_key = db.get(FacilityAccessKey, feedback_row.reviewed_by_access_key_id)
+    assert feedback_row.review_required is False
+    assert feedback_row.reviewed_at is not None
+    assert reviewer_key.facility_id == facility_a_id
+    assert record_row.status == "available" and record_row.quantity == 20
+    db.close()
+
+    queue_a = client.get(
+        "/api/v1/facilities/me/feedback",
+        headers={"X-Facility-Key": token_a},
+    )
+    queue_b = client.get(
+        "/api/v1/facilities/me/feedback",
+        headers={"X-Facility-Key": token_b},
+    )
+    assert queue_a.status_code == 200 and queue_a.json() == []
+    assert queue_b.status_code == 200
+    assert [item["id"] for item in queue_b.json()] == [feedback_b_id]
+
+    repeated = client.patch(
+        f"/api/v1/facilities/me/feedback/{feedback_a_id}/review",
+        headers={"X-Facility-Key": token_a},
+    )
+    assert repeated.status_code == 200
+    assert repeated.json()["reviewed_at"] == first_reviewed_at
+
+    db = TestingSession()
+    feedback_row = db.get(AvailabilityFeedback, feedback_a_id)
+    assert feedback_row.reviewed_by_access_key_id == reviewer_key.id
+    db.close()
+
+
+def test_feedback_review_rejects_invalid_and_unknown_ids():
+    facility_id, _, _ = setup_record()
+    token = "feedback-review-invalid-id-test-key"
+    add_facility_key(facility_id, token)
+
+    invalid = client.patch(
+        "/api/v1/facilities/me/feedback/0/review",
+        headers={"X-Facility-Key": token},
+    )
+    unknown = client.patch(
+        "/api/v1/facilities/me/feedback/999999/review",
+        headers={"X-Facility-Key": token},
+    )
+    assert invalid.status_code == 422
+    assert unknown.status_code == 404
