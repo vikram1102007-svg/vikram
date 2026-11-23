@@ -1,5 +1,9 @@
 from datetime import datetime, timezone
+from pathlib import Path
 
+from alembic.config import Config
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select, text
@@ -59,6 +63,17 @@ def freshness(verified_at: datetime) -> str:
     return "Outdated"
 
 
+def schema_is_current(db: Session) -> bool:
+    """Return whether the database is stamped at every packaged Alembic head."""
+    backend_dir = Path(__file__).resolve().parents[1]
+    alembic_config = Config()
+    alembic_config.set_main_option("script_location", str(backend_dir / "migrations"))
+    script = ScriptDirectory.from_config(alembic_config)
+    expected_heads = set(script.get_heads())
+    current_heads = set(MigrationContext.configure(db.connection()).get_current_heads())
+    return bool(expected_heads) and current_heads == expected_heads
+
+
 @app.get("/health", response_model=MessageOut, tags=["system"])
 def health():
     """Liveness probe: confirms the API process is responding."""
@@ -70,10 +85,23 @@ def readiness(db: Session = Depends(get_db)):
     """Readiness probe: confirms the configured database accepts a simple query."""
     try:
         db.execute(text("SELECT 1"))
+        if not schema_is_current(db):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database schema is not up to date",
+            )
+    except HTTPException:
+        raise
     except SQLAlchemyError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database is unavailable",
+        ) from exc
+    except Exception as exc:
+        # Fail closed if the packaged migration metadata cannot be inspected.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Readiness check is unavailable",
         ) from exc
     return {"status": "ready"}
 
