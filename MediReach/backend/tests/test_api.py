@@ -226,24 +226,24 @@ def test_invalid_inventory_quantity_is_rejected():
 
 def test_freshness_thresholds():
     now = datetime.now(timezone.utc)
-    assert freshness(now - timedelta(hours=23, minutes=59)) == "Recently Verified"
-    assert freshness(now - timedelta(hours=24)) == "Recently Verified"
-    assert freshness(now - timedelta(hours=24, seconds=1)) == "Needs Confirmation"
-    assert freshness(now - timedelta(hours=48)) == "Needs Confirmation"
-    assert freshness(now - timedelta(hours=72)) == "Needs Confirmation"
-    assert freshness(now - timedelta(hours=72, seconds=1)) == "Outdated"
+    assert freshness(now - timedelta(hours=23, minutes=59), now) == "Recently Verified"
+    assert freshness(now - timedelta(hours=24), now) == "Recently Verified"
+    assert freshness(now - timedelta(hours=24, seconds=1), now) == "Needs Confirmation"
+    assert freshness(now - timedelta(hours=48), now) == "Needs Confirmation"
+    assert freshness(now - timedelta(hours=72), now) == "Needs Confirmation"
+    assert freshness(now - timedelta(hours=72, seconds=1), now) == "Outdated"
 
 
 def test_future_verification_timestamp_is_conservative():
     now = datetime.now(timezone.utc)
-    assert freshness(now + timedelta(minutes=4)) == "Recently Verified"
-    assert freshness(now + timedelta(minutes=6)) == "Needs Confirmation"
+    assert freshness(now + timedelta(minutes=4), now) == "Recently Verified"
+    assert freshness(now + timedelta(minutes=6), now) == "Needs Confirmation"
 
 
 def test_sqlite_naive_timestamp_is_interpreted_as_utc():
     now = datetime.now(timezone.utc)
     naive_utc = now.replace(tzinfo=None)
-    assert freshness(naive_utc) == "Recently Verified"
+    assert freshness(naive_utc, now) == "Recently Verified"
 
 
 def test_availability_response_returns_timezone_aware_verification_time():
