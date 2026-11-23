@@ -316,3 +316,31 @@ def test_feedback_for_fictional_demo_inventory_is_rejected_without_mutation():
     assert record.quantity == original_quantity
     assert feedback is None
     db.close()
+
+
+def test_feedback_for_inactive_facility_is_rejected_without_mutation():
+    facility_id, _, record_id = setup_record()
+    db = TestingSession()
+    facility = db.get(Facility, facility_id)
+    facility.is_active = False
+    db.commit()
+    db.close()
+
+    response = client.post(
+        "/api/v1/feedback",
+        json={"inventory_record_id": record_id, "outcome": "not_available"},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Feedback is unavailable for inactive facilities"
+
+    db = TestingSession()
+    record = db.get(InventoryRecord, record_id)
+    feedback = db.scalar(
+        select(AvailabilityFeedback).where(
+            AvailabilityFeedback.inventory_record_id == record_id
+        )
+    )
+    assert record.status == "available"
+    assert record.quantity == 20
+    assert feedback is None
+    db.close()
