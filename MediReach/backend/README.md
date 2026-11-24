@@ -1,6 +1,6 @@
 # MediReach FastAPI backend
 
-A FastAPI API foundation using SQLAlchemy 2, SQLite for local tests/development, and PostgreSQL when DATABASE_URL is configured.
+A FastAPI API foundation using SQLAlchemy 2, SQLite for local tests/development, and PostgreSQL for production.
 
 ## Local run
 
@@ -46,8 +46,29 @@ A facility key cannot submit a facility ID; the API derives the facility scope f
 
 ## Database migrations and production deployment
 
-Alembic manages the schema for both local SQLite and production PostgreSQL. Run `alembic upgrade head` before starting the API; the application does not create or modify tables automatically at startup. Check for model/migration drift with `alembic check` after applying migrations. Create new reviewed revisions with `alembic revision --autogenerate -m "describe change"`, inspect the generated SQL, and commit the revision. Never edit an already-applied migration; add a new revision instead.
+Alembic manages the schema for local SQLite and production PostgreSQL. Run `alembic upgrade head` before starting the API; the application does not create or modify tables automatically at startup. Check for model/migration drift with `alembic check` after applying migrations. Create new reviewed revisions with `alembic revision --autogenerate -m "describe change"`, inspect the generated SQL, and commit the revision. Never edit an already-applied migration; add a new revision instead.
 
-Set DATABASE_URL to managed PostgreSQL and CORS_ORIGINS to the exact frontend origin(s). Do not deploy with a SQLite file or use a demo database for real inventory. Configure HTTPS, managed secrets, backups, monitoring, rate limiting, and an authorised facility inventory source before a pilot.
+### Production environment
+
+Production startup fails closed unless all of the following are configured:
+
+- `ENVIRONMENT=production` (or `prod`)
+- `DATABASE_URL` is a valid PostgreSQL URL with a hostname and database name
+- `CORS_ORIGINS` contains one or more exact HTTPS origins, separated by commas; do not include paths, query strings, fragments, credentials, or wildcard origins
+
+Example shape (placeholders only; never commit real credentials):
+
+```env
+ENVIRONMENT=production
+DATABASE_URL=postgresql://<db-user>:<db-password>@<db-host>:5432/<db-name>
+CORS_ORIGINS=https://medireach-platform.embarko.app
+SEED_DEMO_DATA=false
+```
+
+The application normalises `postgres://` and `postgresql://` to the installed `postgresql+psycopg://` driver. SQLAlchemy and Alembic use the same normalised URL. SQLite remains supported for local development and CI only.
+
+Store the real database URL in the backend host's secret manager. Do not place it in frontend files, Docker build arguments, committed `.env` files, or logs. No database or backend host is provisioned by this repository. Do not deploy with a SQLite file or use a demo database for real inventory.
+
+Before a pilot, configure HTTPS, managed secrets, backups, monitoring, rate limiting, and an authorised facility inventory source. Confirm migrations against the actual managed PostgreSQL service before routing traffic.
 
 No real facilities or stock are fabricated by this API. Demo records are excluded from availability search by default. Feedback is a review signal and does not change stock. Do not store patient diagnoses, prescriptions, identity documents, or unnecessary sensitive health information. Users must confirm availability directly with the facility. MediReach does not diagnose, prescribe, or recommend medicine substitutions.
