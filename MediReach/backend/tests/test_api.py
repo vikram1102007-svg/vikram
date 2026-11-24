@@ -226,9 +226,33 @@ def test_invalid_inventory_quantity_is_rejected():
 
 def test_freshness_thresholds():
     now = datetime.now(timezone.utc)
-    assert freshness(now - timedelta(hours=23, minutes=59)) == "Recently Verified"
-    assert freshness(now - timedelta(hours=48)) == "Needs Confirmation"
-    assert freshness(now - timedelta(hours=73)) == "Outdated"
+    assert freshness(now - timedelta(hours=23, minutes=59), now) == "Recently Verified"
+    assert freshness(now - timedelta(hours=24), now) == "Recently Verified"
+    assert freshness(now - timedelta(hours=24, seconds=1), now) == "Needs Confirmation"
+    assert freshness(now - timedelta(hours=48), now) == "Needs Confirmation"
+    assert freshness(now - timedelta(hours=72), now) == "Needs Confirmation"
+    assert freshness(now - timedelta(hours=72, seconds=1), now) == "Outdated"
+
+
+def test_future_verification_timestamp_is_conservative():
+    now = datetime.now(timezone.utc)
+    assert freshness(now + timedelta(minutes=4), now) == "Recently Verified"
+    assert freshness(now + timedelta(minutes=6), now) == "Needs Confirmation"
+
+
+def test_sqlite_naive_timestamp_is_interpreted_as_utc():
+    now = datetime.now(timezone.utc)
+    naive_utc = now.replace(tzinfo=None)
+    assert freshness(naive_utc, now) == "Recently Verified"
+
+
+def test_availability_response_returns_timezone_aware_verification_time():
+    setup_record()
+    response = client.get("/api/v1/availability", params={"medicine": "Para"})
+    assert response.status_code == 200
+    verified_at = response.json()[0]["verified_at"]
+    parsed = datetime.fromisoformat(verified_at.replace("Z", "+00:00"))
+    assert parsed.tzinfo is not None
 
 def test_facility_key_is_stored_as_hash_not_plaintext():
     facility_id, _, _ = setup_record()
@@ -379,3 +403,306 @@ def test_facility_staff_cannot_overwrite_fictional_demo_inventory():
     assert record.quantity == 20
     assert audit is None
     db.close()
+
+
+def test_facility_audit_history_is_authenticated_scoped_and_paginated():
+    facility_a_id, medicine_id, record_a_id = setup_record()
+    db = TestingSession()
+    facility_b = Facility(
+        name="Second Test PHC",
+        district="Other District",
+        address="Other test address",
+        is_active=True,
+    )
+    db.add(facility_b)
+    db.commit()
+    db.refresh(facility_b)
+    record_b = InventoryRecord(
+        facility_id=facility_b.id,
+        medicine_id=medicine_id,
+        status="available",
+        quantity=30,
+        verified_at=datetime.now(timezone.utc),
+        is_demo=False,
+    )
+    db.add(record_b)
+    db.commit()
+    facility_b_id = facility_b.id
+    record_b_id = record_b.id
+    db.close()
+
+    token_a = "facility-a-audit-history-test-key"
+    token_b = "facility-b-audit-history-test-key"
+    add_facility_key(facility_a_id, token_a)
+    add_facility_key(facility_b_id, token_b)
+
+    update_a1 = client.put(
+        "/api/v1/facilities/me/inventory",
+        headers={"X-Facility-Key": token_a},
+        json={"medicine_id": medicine_id, "status": "low_stock", "quantity": 7},
+    )
+    update_a2 = client.put(
+        "/api/v1/facilities/me/inventory",
+        headers={"X-Facility-Key": token_a},
+        json={"medicine_id": medicine_id, "status": "available", "quantity": 15},
+    )
+    update_b = client.put(
+        "/api/v1/facilities/me/inventory",
+        headers={"X-Facility-Key": token_b},
+        json={"medicine_id": medicine_id, "status": "low_stock", "quantity": 5},
+    )
+    assert update_a1.status_code == update_a2.status_code == update_b.status_code == 200
+
+    unauthenticated = client.get("/api/v1/facilities/me/audit")
+    assert unauthenticated.status_code == 401
+
+    first_page = client.get(
+        "/api/v1/facilities/me/audit",
+        headers={"X-Facility-Key": token_a},
+        params={"limit": 1},
+    )
+    assert first_page.status_code == 200
+    first = first_page.json()
+    assert len(first) == 1
+    assert first[0]["inventory_record_id"] == record_a_id
+    assert first[0]["medicine_name"] == "Paracetamol"
+    assert first[0]["action"] == "updated"
+    assert first[0]["previous_quantity"] == 7
+    assert first[0]["new_quantity"] == 15
+
+    second_page = client.get(
+        "/api/v1/facilities/me/audit",
+        headers={"X-Facility-Key": token_a},
+        params={"limit": 10, "before_id": first[0]["id"]},
+    )
+    assert second_page.status_code == 200
+    assert len(second_page.json()) == 1
+    assert second_page.json()[0]["inventory_record_id"] == record_a_id
+    assert second_page.json()[0]["new_quantity"] == 7
+
+    facility_b_history = client.get(
+        "/api/v1/facilities/me/audit",
+        headers={"X-Facility-Key": token_b},
+    )
+    assert facility_b_history.status_code == 200
+    assert len(facility_b_history.json()) == 1
+    assert facility_b_history.json()[0]["inventory_record_id"] == record_b_id
+
+    invalid_limit = client.get(
+        "/api/v1/facilities/me/audit",
+        headers={"X-Facility-Key": token_a},
+        params={"limit": 101},
+    )
+    invalid_cursor = client.get(
+        "/api/v1/facilities/me/audit",
+        headers={"X-Facility-Key": token_a},
+        params={"before_id": 0},
+    )
+    assert invalid_limit.status_code == 422
+    assert invalid_cursor.status_code == 422
+
+
+def test_facility_feedback_review_queue_is_scoped_and_hides_comments():
+    facility_a_id, medicine_id, record_a_id = setup_record()
+    db = TestingSession()
+    facility_b = Facility(
+        name="Second Test PHC",
+        district="Other District",
+        address="Other test address",
+        is_active=True,
+    )
+    db.add(facility_b)
+    db.commit()
+    db.refresh(facility_b)
+    record_b = InventoryRecord(
+        facility_id=facility_b.id,
+        medicine_id=medicine_id,
+        status="available",
+        quantity=30,
+        verified_at=datetime.now(timezone.utc),
+        is_demo=False,
+    )
+    db.add(record_b)
+    db.commit()
+    record_b_id = record_b.id
+    facility_b_id = facility_b.id
+    db.close()
+
+    token_a = "facility-a-feedback-queue-test-key"
+    token_b = "facility-b-feedback-queue-test-key"
+    add_facility_key(facility_a_id, token_a)
+    add_facility_key(facility_b_id, token_b)
+
+    feedback_a1 = client.post(
+        "/api/v1/feedback",
+        json={"inventory_record_id": record_a_id, "outcome": "not_available"},
+    )
+    feedback_a2 = client.post(
+        "/api/v1/feedback",
+        json={"inventory_record_id": record_a_id, "outcome": "received"},
+    )
+    feedback_b = client.post(
+        "/api/v1/feedback",
+        json={"inventory_record_id": record_b_id, "outcome": "not_available"},
+    )
+    assert feedback_a1.status_code == feedback_a2.status_code == feedback_b.status_code == 201
+
+    unauthenticated = client.get("/api/v1/facilities/me/feedback")
+    assert unauthenticated.status_code == 401
+
+    first_page = client.get(
+        "/api/v1/facilities/me/feedback",
+        headers={"X-Facility-Key": token_a},
+        params={"limit": 1},
+    )
+    assert first_page.status_code == 200
+    first = first_page.json()
+    assert len(first) == 1
+    assert first[0]["id"] == feedback_a2.json()["id"]
+    assert first[0]["inventory_record_id"] == record_a_id
+    assert first[0]["outcome"] == "received"
+    assert "comment" not in first[0]
+
+    second_page = client.get(
+        "/api/v1/facilities/me/feedback",
+        headers={"X-Facility-Key": token_a},
+        params={"before_id": first[0]["id"]},
+    )
+    assert second_page.status_code == 200
+    assert [item["id"] for item in second_page.json()] == [feedback_a1.json()["id"]]
+
+    facility_b_queue = client.get(
+        "/api/v1/facilities/me/feedback",
+        headers={"X-Facility-Key": token_b},
+    )
+    assert facility_b_queue.status_code == 200
+    assert [item["inventory_record_id"] for item in facility_b_queue.json()] == [record_b_id]
+
+    invalid_limit = client.get(
+        "/api/v1/facilities/me/feedback",
+        headers={"X-Facility-Key": token_a},
+        params={"limit": 101},
+    )
+    invalid_cursor = client.get(
+        "/api/v1/facilities/me/feedback",
+        headers={"X-Facility-Key": token_a},
+        params={"before_id": 0},
+    )
+    assert invalid_limit.status_code == 422
+    assert invalid_cursor.status_code == 422
+
+
+def test_feedback_review_is_facility_scoped_idempotent_and_never_changes_inventory():
+    facility_a_id, medicine_id, record_a_id = setup_record()
+    db = TestingSession()
+    facility_b = Facility(
+        name="Second Test PHC",
+        district="Other District",
+        address="Other test address",
+        is_active=True,
+    )
+    db.add(facility_b)
+    db.commit()
+    db.refresh(facility_b)
+    record_b = InventoryRecord(
+        facility_id=facility_b.id,
+        medicine_id=medicine_id,
+        status="available",
+        quantity=30,
+        verified_at=datetime.now(timezone.utc),
+        is_demo=False,
+    )
+    db.add(record_b)
+    db.commit()
+    record_b_id = record_b.id
+    facility_b_id = facility_b.id
+    db.close()
+
+    token_a = "facility-a-feedback-review-action-key"
+    token_b = "facility-b-feedback-review-action-key"
+    add_facility_key(facility_a_id, token_a)
+    add_facility_key(facility_b_id, token_b)
+
+    feedback_a = client.post(
+        "/api/v1/feedback",
+        json={"inventory_record_id": record_a_id, "outcome": "not_available"},
+    )
+    feedback_b = client.post(
+        "/api/v1/feedback",
+        json={"inventory_record_id": record_b_id, "outcome": "received"},
+    )
+    assert feedback_a.status_code == feedback_b.status_code == 201
+    feedback_a_id = feedback_a.json()["id"]
+    feedback_b_id = feedback_b.json()["id"]
+
+    unauthenticated = client.patch(
+        f"/api/v1/facilities/me/feedback/{feedback_a_id}/review"
+    )
+    cross_facility = client.patch(
+        f"/api/v1/facilities/me/feedback/{feedback_b_id}/review",
+        headers={"X-Facility-Key": token_a},
+    )
+    assert unauthenticated.status_code == 401
+    assert cross_facility.status_code == 404
+
+    reviewed = client.patch(
+        f"/api/v1/facilities/me/feedback/{feedback_a_id}/review",
+        headers={"X-Facility-Key": token_a},
+    )
+    assert reviewed.status_code == 200
+    body = reviewed.json()
+    assert body["id"] == feedback_a_id
+    assert body["review_required"] is False
+    assert body["reviewed_at"] is not None
+    first_reviewed_at = body["reviewed_at"]
+
+    db = TestingSession()
+    feedback_row = db.get(AvailabilityFeedback, feedback_a_id)
+    record_row = db.get(InventoryRecord, record_a_id)
+    reviewer_key = db.get(FacilityAccessKey, feedback_row.reviewed_by_access_key_id)
+    assert feedback_row.reviewed_at is not None
+    assert reviewer_key.facility_id == facility_a_id
+    assert record_row.status == "available"
+    assert record_row.quantity == 20
+    db.close()
+
+    queue_a = client.get(
+        "/api/v1/facilities/me/feedback",
+        headers={"X-Facility-Key": token_a},
+    )
+    queue_b = client.get(
+        "/api/v1/facilities/me/feedback",
+        headers={"X-Facility-Key": token_b},
+    )
+    assert queue_a.status_code == queue_b.status_code == 200
+    assert queue_a.json() == []
+    assert [item["id"] for item in queue_b.json()] == [feedback_b_id]
+
+    repeated = client.patch(
+        f"/api/v1/facilities/me/feedback/{feedback_a_id}/review",
+        headers={"X-Facility-Key": token_a},
+    )
+    assert repeated.status_code == 200
+    assert repeated.json()["reviewed_at"] == first_reviewed_at
+
+    db = TestingSession()
+    feedback_row = db.get(AvailabilityFeedback, feedback_a_id)
+    assert feedback_row.reviewed_by_access_key_id == reviewer_key.id
+    db.close()
+
+
+def test_feedback_review_rejects_invalid_and_unknown_ids():
+    facility_id, _, _ = setup_record()
+    token = "feedback-review-invalid-id-test-key"
+    add_facility_key(facility_id, token)
+
+    invalid = client.patch(
+        "/api/v1/facilities/me/feedback/0/review",
+        headers={"X-Facility-Key": token},
+    )
+    unknown = client.patch(
+        "/api/v1/facilities/me/feedback/999999/review",
+        headers={"X-Facility-Key": token},
+    )
+    assert invalid.status_code == 422
+    assert unknown.status_code == 404
