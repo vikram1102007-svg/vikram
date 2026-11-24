@@ -3,11 +3,14 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
-from app.main import app, freshness
+from app.main import app, freshness, persist_facility_inventory_update
+from app.schemas import InventoryUpsert
+from app.security import FacilityStaff
 from app.models import (
     AvailabilityFeedback,
     Facility,
@@ -713,3 +716,236 @@ def test_feedback_review_rejects_invalid_and_unknown_ids():
     )
     assert invalid.status_code == 422
     assert unknown.status_code == 404
+
+
+
+def test_concurrent_inventory_create_recovers_as_audited_update(monkeypatch):
+    facility_id, medicine_id, record_id = setup_record()
+    db = TestingSession()
+    db.delete(db.get(InventoryRecord, record_id))
+    db.commit()
+    db.close()
+
+    token = "concurrent-inventory-create-test-key"
+    add_facility_key(facility_id, token)
+    key_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    key_db = TestingSession()
+    access_key = key_db.scalar(
+        select(FacilityAccessKey).where(FacilityAccessKey.key_hash == key_hash)
+    )
+    access_key_id = access_key.id
+    key_db.close()
+
+    request_db = TestingSession()
+    original_flush = request_db.flush
+    conflict_state = {"raised": False}
+
+    def simulate_another_request_winning_the_insert(*args, **kwargs):
+        pending_inventory = any(
+            isinstance(item, InventoryRecord) for item in request_db.new
+        )
+        if pending_inventory and not conflict_state["raised"]:
+            conflict_state["raised"] = True
+            request_db.rollback()
+
+            competing_db = TestingSession()
+            competing_record = InventoryRecord(
+                facility_id=facility_id,
+                medicine_id=medicine_id,
+                status="available",
+                quantity=9,
+                verified_at=datetime.now(timezone.utc),
+                source="facility_staff_portal",
+                is_demo=False,
+            )
+            competing_db.add(competing_record)
+            competing_db.flush()
+            competing_db.add(
+                InventoryAuditLog(
+                    facility_id=facility_id,
+                    inventory_record_id=competing_record.id,
+                    access_key_id=access_key_id,
+                    action="created",
+                    previous_status=None,
+                    new_status="available",
+                    previous_quantity=None,
+                    new_quantity=9,
+                )
+            )
+            competing_db.commit()
+            competing_db.close()
+            raise IntegrityError(
+                "INSERT inventory_records",
+                {},
+                Exception("uq_facility_medicine"),
+            )
+        return original_flush(*args, **kwargs)
+
+    monkeypatch.setattr(request_db, "flush", simulate_another_request_winning_the_insert)
+    persist_facility_inventory_update(
+        db=request_db,
+        facility_id=facility_id,
+        access_key_id=access_key_id,
+        payload=InventoryUpsert(
+            medicine_id=medicine_id,
+            status="low_stock",
+            quantity=4,
+        ),
+    )
+    request_db.close()
+
+    verify_db = TestingSession()
+    record = verify_db.scalar(
+        select(InventoryRecord).where(
+            InventoryRecord.facility_id == facility_id,
+            InventoryRecord.medicine_id == medicine_id,
+        )
+    )
+    audits = verify_db.scalars(
+        select(InventoryAuditLog)
+        .where(InventoryAuditLog.inventory_record_id == record.id)
+        .order_by(InventoryAuditLog.id)
+    ).all()
+    assert conflict_state["raised"] is True
+    assert record.status == "low_stock"
+    assert record.quantity == 4
+    assert len(audits) == 2
+    assert audits[0].action == "created"
+    assert audits[1].action == "updated"
+    assert audits[1].previous_status == "available"
+    assert audits[1].previous_quantity == 9
+    assert audits[1].new_status == "low_stock"
+    assert audits[1].new_quantity == 4
+    verify_db.close()
+
+
+def test_inventory_create_integrity_failure_without_matching_row_is_not_swallowed(monkeypatch):
+    facility_id, medicine_id, record_id = setup_record()
+    db = TestingSession()
+    db.delete(db.get(InventoryRecord, record_id))
+    db.commit()
+    db.close()
+
+    token = "inventory-create-failure-test-key"
+    add_facility_key(facility_id, token)
+    key_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    key_db = TestingSession()
+    access_key = key_db.scalar(
+        select(FacilityAccessKey).where(FacilityAccessKey.key_hash == key_hash)
+    )
+    access_key_id = access_key.id
+    key_db.close()
+
+    request_db = TestingSession()
+    original_flush = request_db.flush
+
+    def fail_without_a_competing_insert(*args, **kwargs):
+        if any(isinstance(item, InventoryRecord) for item in request_db.new):
+            raise IntegrityError("INSERT inventory_records", {}, Exception("foreign key"))
+        return original_flush(*args, **kwargs)
+
+    monkeypatch.setattr(request_db, "flush", fail_without_a_competing_insert)
+    try:
+        import pytest
+
+        with pytest.raises(IntegrityError):
+            persist_facility_inventory_update(
+                db=request_db,
+                facility_id=facility_id,
+                access_key_id=access_key_id,
+                payload=InventoryUpsert(
+                    medicine_id=medicine_id,
+                    status="available",
+                    quantity=6,
+                ),
+            )
+    finally:
+        request_db.close()
+
+    verify_db = TestingSession()
+    assert verify_db.scalar(
+        select(InventoryRecord).where(
+            InventoryRecord.facility_id == facility_id,
+            InventoryRecord.medicine_id == medicine_id,
+        )
+    ) is None
+    assert verify_db.scalar(select(InventoryAuditLog)) is None
+    verify_db.close()
+
+
+def test_inventory_create_conflict_does_not_promote_competing_demo_record(monkeypatch):
+    facility_id, medicine_id, record_id = setup_record()
+    db = TestingSession()
+    db.delete(db.get(InventoryRecord, record_id))
+    db.commit()
+    db.close()
+
+    token = "inventory-demo-race-test-key"
+    add_facility_key(facility_id, token)
+    key_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    key_db = TestingSession()
+    access_key = key_db.scalar(
+        select(FacilityAccessKey).where(FacilityAccessKey.key_hash == key_hash)
+    )
+    access_key_id = access_key.id
+    key_db.close()
+
+    request_db = TestingSession()
+    original_flush = request_db.flush
+    state = {"raised": False}
+
+    def simulate_demo_record_winning(*args, **kwargs):
+        if any(isinstance(item, InventoryRecord) for item in request_db.new) and not state["raised"]:
+            state["raised"] = True
+            request_db.rollback()
+            competing_db = TestingSession()
+            competing_db.add(
+                InventoryRecord(
+                    facility_id=facility_id,
+                    medicine_id=medicine_id,
+                    status="available",
+                    quantity=20,
+                    verified_at=datetime.now(timezone.utc),
+                    is_demo=True,
+                )
+            )
+            competing_db.commit()
+            competing_db.close()
+            raise IntegrityError(
+                "INSERT inventory_records",
+                {},
+                Exception("uq_facility_medicine"),
+            )
+        return original_flush(*args, **kwargs)
+
+    monkeypatch.setattr(request_db, "flush", simulate_demo_record_winning)
+    try:
+        import pytest
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as error:
+            persist_facility_inventory_update(
+                db=request_db,
+                facility_id=facility_id,
+                access_key_id=access_key_id,
+                payload=InventoryUpsert(
+                    medicine_id=medicine_id,
+                    status="low_stock",
+                    quantity=3,
+                ),
+            )
+        assert error.value.status_code == 409
+    finally:
+        request_db.close()
+
+    verify_db = TestingSession()
+    record = verify_db.scalar(
+        select(InventoryRecord).where(
+            InventoryRecord.facility_id == facility_id,
+            InventoryRecord.medicine_id == medicine_id,
+        )
+    )
+    assert record is not None and record.is_demo is True
+    assert record.status == "available" and record.quantity == 20
+    assert verify_db.scalar(select(InventoryAuditLog)) is None
+    verify_db.close()
