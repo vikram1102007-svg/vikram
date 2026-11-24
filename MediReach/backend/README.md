@@ -24,6 +24,8 @@ API docs: http://127.0.0.1:8000/docs. Health: /health.
 - GET /api/v1/availability?medicine=&district=&include_demo=false — availability and server-calculated freshness
 - POST /api/v1/feedback — records a patient feedback review signal; never changes inventory
 
+Feedback accepts only an inventory record ID and a structured outcome (`received` or `not_available`). Free-text fields are rejected at the API boundary to avoid collecting unnecessary personal or health information. Feedback is a review signal only and never changes inventory.
+
 ## Facility staff inventory updates
 
 - PUT /api/v1/facilities/me/inventory — updates only the facility bound to the supplied X-Facility-Key credential.
@@ -44,7 +46,7 @@ A facility key cannot submit a facility ID; the API derives the facility scope f
 
 ## Database migrations and production deployment
 
-Alembic manages the schema for both local SQLite and production PostgreSQL. Run `alembic upgrade head` before starting the API; the application does not create or modify tables automatically at startup. Check for model/migration drift with `alembic check` after applying migrations. Create new reviewed revisions with `alembic revision --autogenerate -m \"describe change\"`, inspect the generated SQL, and commit the revision. Never edit an already-applied migration; add a new revision instead.
+Alembic manages the schema for both local SQLite and production PostgreSQL. Run `alembic upgrade head` before starting the API; the application does not create or modify tables automatically at startup. Check for model/migration drift with `alembic check` after applying migrations. Create new reviewed revisions with `alembic revision --autogenerate -m "describe change"`, inspect the generated SQL, and commit the revision. Never edit an already-applied migration; add a new revision instead.
 
 Set DATABASE_URL to managed PostgreSQL and CORS_ORIGINS to the exact frontend origin(s). Do not deploy with a SQLite file or use a demo database for real inventory. Configure HTTPS, managed secrets, backups, monitoring, rate limiting, and an authorised facility inventory source before a pilot.
 

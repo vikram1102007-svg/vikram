@@ -286,3 +286,96 @@ def test_feedback_comment_length_is_limited():
         },
     )
     assert response.status_code == 422
+
+
+def test_feedback_for_fictional_demo_inventory_is_rejected_without_mutation():
+    _, _, record_id = setup_record()
+    db = TestingSession()
+    record = db.get(InventoryRecord, record_id)
+    record.is_demo = True
+    original_status = record.status
+    original_quantity = record.quantity
+    db.commit()
+    db.close()
+
+    response = client.post(
+        "/api/v1/feedback",
+        json={"inventory_record_id": record_id, "outcome": "not_available"},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Feedback is unavailable for fictional demo records"
+
+    db = TestingSession()
+    record = db.get(InventoryRecord, record_id)
+    feedback = db.scalar(
+        select(AvailabilityFeedback).where(
+            AvailabilityFeedback.inventory_record_id == record_id
+        )
+    )
+    assert record.status == original_status
+    assert record.quantity == original_quantity
+    assert feedback is None
+    db.close()
+
+
+def test_feedback_for_inactive_facility_is_rejected_without_mutation():
+    facility_id, _, record_id = setup_record()
+    db = TestingSession()
+    facility = db.get(Facility, facility_id)
+    facility.is_active = False
+    db.commit()
+    db.close()
+
+    response = client.post(
+        "/api/v1/feedback",
+        json={"inventory_record_id": record_id, "outcome": "not_available"},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Feedback is unavailable for inactive facilities"
+
+    db = TestingSession()
+    record = db.get(InventoryRecord, record_id)
+    feedback = db.scalar(
+        select(AvailabilityFeedback).where(
+            AvailabilityFeedback.inventory_record_id == record_id
+        )
+    )
+    assert record.status == "available"
+    assert record.quantity == 20
+    assert feedback is None
+    db.close()
+
+
+def test_facility_staff_cannot_overwrite_fictional_demo_inventory():
+    facility_id, medicine_id, record_id = setup_record()
+    token = "staff-key-for-demo-inventory-protection"
+    add_facility_key(facility_id, token)
+
+    db = TestingSession()
+    record = db.get(InventoryRecord, record_id)
+    record.is_demo = True
+    db.commit()
+    db.close()
+
+    response = client.put(
+        "/api/v1/facilities/me/inventory",
+        headers={"X-Facility-Key": token},
+        json={"medicine_id": medicine_id, "status": "low_stock", "quantity": 4},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "Fictional demo inventory must be replaced by an administrator before staff updates"
+    )
+
+    db = TestingSession()
+    record = db.get(InventoryRecord, record_id)
+    audit = db.scalar(
+        select(InventoryAuditLog).where(
+            InventoryAuditLog.inventory_record_id == record_id
+        )
+    )
+    assert record.is_demo is True
+    assert record.status == "available"
+    assert record.quantity == 20
+    assert audit is None
+    db.close()
