@@ -215,6 +215,18 @@ def search_availability(
     ]
 
 
+def _inventory_record_lock_query(facility_id: int, medicine_id: int):
+    """Build the facility-scoped row lock used by PostgreSQL inventory writes."""
+    return (
+        select(InventoryRecord)
+        .where(
+            InventoryRecord.facility_id == facility_id,
+            InventoryRecord.medicine_id == medicine_id,
+        )
+        .with_for_update()
+    )
+
+
 def persist_facility_inventory_update(
     db: Session,
     facility_id: int,
@@ -231,14 +243,7 @@ def persist_facility_inventory_update(
     if db.get(Medicine, payload.medicine_id) is None:
         raise HTTPException(status_code=404, detail="Medicine not found")
 
-    record_stmt = (
-        select(InventoryRecord)
-        .where(
-            InventoryRecord.facility_id == facility_id,
-            InventoryRecord.medicine_id == payload.medicine_id,
-        )
-        .with_for_update()
-    )
+    record_stmt = _inventory_record_lock_query(facility_id, payload.medicine_id)
     record = db.scalar(record_stmt)
 
     if record is None:
