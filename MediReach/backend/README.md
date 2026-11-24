@@ -49,3 +49,8 @@ Alembic manages the schema for both local SQLite and production PostgreSQL. Run 
 Set DATABASE_URL to managed PostgreSQL and CORS_ORIGINS to the exact frontend origin(s). Do not deploy with a SQLite file or use a demo database for real inventory. Configure HTTPS, managed secrets, backups, monitoring, rate limiting, and an authorised facility inventory source before a pilot.
 
 No real facilities or stock are fabricated by this API. Demo records are excluded from availability search by default. Feedback is a review signal and does not change stock. Do not store patient diagnoses, prescriptions, identity documents, or unnecessary sensitive health information. Users must confirm availability directly with the facility. MediReach does not diagnose, prescribe, or recommend medicine substitutions.
+
+
+## Patient feedback data minimisation
+
+The public feedback endpoint records only the structured outcome and the referenced availability record. Optional legacy free-text comments are deliberately not persisted; the database column is retained so existing records are not deleted. Clients should send only the inventory record ID and outcome. Do not include names, diagnoses, prescriptions, contact details, or other personal health information in feedback requests.
