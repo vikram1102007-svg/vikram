@@ -17,7 +17,7 @@ engine = create_engine(
 TestSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
-def test_feedback_does_not_persist_free_text_comments():
+def test_feedback_rejects_free_text_comments_before_creating_review_signal():
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     db: Session = TestSession()
@@ -61,18 +61,19 @@ def test_feedback_does_not_persist_free_text_comments():
                 json={
                     "inventory_record_id": record_id,
                     "outcome": "not_available",
-                    "comment": "Unstructured personal details must not be retained",
+                    "comment": "Unstructured personal details must not be collected",
                 },
             )
-        assert response.status_code == 201
-        feedback_id = response.json()["id"]
+        assert response.status_code == 422
 
         db = TestSession()
-        feedback = db.get(AvailabilityFeedback, feedback_id)
-        assert feedback is not None
-        assert feedback.review_required is True
-        assert feedback.comment is None
+        feedback = db.scalar(
+            select(AvailabilityFeedback).where(
+                AvailabilityFeedback.inventory_record_id == record_id
+            )
+        )
         inventory = db.get(InventoryRecord, record_id)
+        assert feedback is None
         assert inventory.status == "available"
         assert inventory.quantity == 10
         db.close()
