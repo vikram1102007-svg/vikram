@@ -41,7 +41,8 @@ class InventoryUpsert(BaseModel):
 class FeedbackCreate(BaseModel):
     inventory_record_id: int = Field(gt=0)
     outcome: Literal["received", "not_available"]
-    comment: str | None = Field(default=None, max_length=500)
+    # Deliberately accept only structured feedback; free-text may contain sensitive health data.
+    model_config = ConfigDict(extra="forbid")
 
 
 class FeedbackOut(BaseModel):
