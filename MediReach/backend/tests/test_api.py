@@ -92,6 +92,33 @@ def test_availability_search_returns_freshness():
     assert response.json()[0]["confidence"] == "Recently Verified"
 
 
+def test_api_responses_disable_caching_for_public_and_staff_data():
+    facility_id, _, _ = setup_record()
+
+    availability = client.get(
+        "/api/v1/availability",
+        params={"medicine": "Para"},
+    )
+    assert availability.status_code == 200
+    assert availability.headers["cache-control"] == "no-store"
+    assert availability.headers["pragma"] == "no-cache"
+
+    unauthenticated = client.get("/api/v1/facilities/me/audit")
+    assert unauthenticated.status_code == 401
+    assert unauthenticated.headers["cache-control"] == "no-store"
+
+    token = "api-no-store-staff-response-test-key"
+    add_facility_key(facility_id, token)
+    staff_queue = client.get(
+        "/api/v1/facilities/me/feedback",
+        headers={"X-Facility-Key": token},
+    )
+    assert staff_queue.status_code == 200
+    assert staff_queue.json() == []
+    assert staff_queue.headers["cache-control"] == "no-store"
+    assert staff_queue.headers["pragma"] == "no-cache"
+
+
 def test_feedback_does_not_change_inventory_and_creates_review_signal():
     _, _, record_id = setup_record()
     response = client.post(
