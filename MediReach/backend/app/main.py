@@ -104,7 +104,7 @@ def search_availability(
     medicine_term = medicine.strip()
     if len(medicine_term) < 2:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Medicine search must contain at least two non-whitespace characters",
         )
 
