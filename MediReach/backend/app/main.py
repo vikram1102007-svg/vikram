@@ -6,7 +6,7 @@ from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from fastapi import Depends, FastAPI, HTTPException, Path as PathParam, Query, status
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload
 
@@ -370,11 +370,31 @@ def mark_facility_feedback_reviewed(
     staff: FacilityStaff = Depends(require_facility_staff),
     db: Session = Depends(get_db),
 ):
-    """Acknowledge one feedback signal for the authenticated facility.
+    """Atomically acknowledge one feedback signal for the authenticated facility.
 
-    Only review metadata changes; inventory status, quantity and verification
-    time are left untouched. Repeated requests preserve the first reviewer.
+    The conditional UPDATE lets only the first concurrent reviewer win. It
+    changes review metadata only; inventory values and verification time stay
+    untouched. Repeated requests return the original reviewer and timestamp.
     """
+    authorised_inventory_ids = select(InventoryRecord.id).where(
+        InventoryRecord.facility_id == staff.facility_id,
+        InventoryRecord.is_demo.is_(False),
+    )
+    db.execute(
+        update(AvailabilityFeedback)
+        .where(
+            AvailabilityFeedback.id == feedback_id,
+            AvailabilityFeedback.review_required.is_(True),
+            AvailabilityFeedback.inventory_record_id.in_(authorised_inventory_ids),
+        )
+        .values(
+            review_required=False,
+            reviewed_at=datetime.now(timezone.utc),
+            reviewed_by_access_key_id=staff.access_key_id,
+        )
+    )
+    db.commit()
+
     feedback = db.scalar(
         select(AvailabilityFeedback)
         .join(
@@ -389,13 +409,6 @@ def mark_facility_feedback_reviewed(
     )
     if feedback is None:
         raise HTTPException(status_code=404, detail="Feedback not found")
-
-    if feedback.review_required:
-        feedback.review_required = False
-        feedback.reviewed_at = datetime.now(timezone.utc)
-        feedback.reviewed_by_access_key_id = staff.access_key_id
-        db.commit()
-        db.refresh(feedback)
 
     return FeedbackReviewActionOut(
         id=feedback.id,

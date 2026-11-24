@@ -619,8 +619,10 @@ def test_feedback_review_is_facility_scoped_idempotent_and_never_changes_invento
     db.close()
 
     token_a = "facility-a-feedback-review-action-key"
+    token_a_second = "facility-a-second-reviewer-key"
     token_b = "facility-b-feedback-review-action-key"
     add_facility_key(facility_a_id, token_a)
+    add_facility_key(facility_a_id, token_a_second)
     add_facility_key(facility_b_id, token_b)
 
     feedback_a = client.post(
@@ -680,14 +682,19 @@ def test_feedback_review_is_facility_scoped_idempotent_and_never_changes_invento
 
     repeated = client.patch(
         f"/api/v1/facilities/me/feedback/{feedback_a_id}/review",
-        headers={"X-Facility-Key": token_a},
+        headers={"X-Facility-Key": token_a_second},
     )
     assert repeated.status_code == 200
     assert repeated.json()["reviewed_at"] == first_reviewed_at
 
     db = TestingSession()
     feedback_row = db.get(AvailabilityFeedback, feedback_a_id)
+    second_key_hash = hashlib.sha256(token_a_second.encode("utf-8")).hexdigest()
+    second_key = db.scalar(
+        select(FacilityAccessKey).where(FacilityAccessKey.key_hash == second_key_hash)
+    )
     assert feedback_row.reviewed_by_access_key_id == reviewer_key.id
+    assert second_key is not None and second_key.id != reviewer_key.id
     db.close()
 
 
