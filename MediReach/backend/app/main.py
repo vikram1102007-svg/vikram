@@ -43,6 +43,12 @@ app.add_middleware(
 )
 
 
+def _contains_literal(value: str) -> str:
+    """Build a case-insensitive contains pattern without treating user input as SQL wildcards."""
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
 def freshness(verified_at: datetime) -> str:
     if verified_at.tzinfo is None:
         verified_at = verified_at.replace(tzinfo=timezone.utc)
@@ -68,8 +74,9 @@ def list_medicines(
     db: Session = Depends(get_db),
 ):
     stmt = select(Medicine).order_by(Medicine.name)
-    if q:
-        stmt = stmt.where(Medicine.name.ilike(f"%{q.strip()}%"))
+    query = q.strip() if q is not None else ""
+    if query:
+        stmt = stmt.where(Medicine.name.ilike(_contains_literal(query), escape="\\"))
     return db.scalars(stmt.limit(100)).all()
 
 
@@ -79,8 +86,11 @@ def list_facilities(
     db: Session = Depends(get_db),
 ):
     stmt = select(Facility).where(Facility.is_active.is_(True)).order_by(Facility.name)
-    if district:
-        stmt = stmt.where(Facility.district.ilike(f"%{district.strip()}%"))
+    district_filter = district.strip() if district is not None else ""
+    if district_filter:
+        stmt = stmt.where(
+            Facility.district.ilike(_contains_literal(district_filter), escape="\\")
+        )
     return db.scalars(stmt.limit(100)).all()
 
 
@@ -91,6 +101,13 @@ def search_availability(
     include_demo: bool = Query(default=False),
     db: Session = Depends(get_db),
 ):
+    medicine_term = medicine.strip()
+    if len(medicine_term) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Medicine search must contain at least two non-whitespace characters",
+        )
+
     stmt = (
         select(InventoryRecord)
         .options(
@@ -100,12 +117,15 @@ def search_availability(
         .join(Medicine)
         .join(Facility)
         .where(
-            Medicine.name.ilike(f"%{medicine.strip()}%"),
+            Medicine.name.ilike(_contains_literal(medicine_term), escape="\\"),
             Facility.is_active.is_(True),
         )
     )
-    if district:
-        stmt = stmt.where(Facility.district.ilike(f"%{district.strip()}%"))
+    district_filter = district.strip() if district is not None else ""
+    if district_filter:
+        stmt = stmt.where(
+            Facility.district.ilike(_contains_literal(district_filter), escape="\\")
+        )
     if not include_demo:
         stmt = stmt.where(InventoryRecord.is_demo.is_(False))
     records = db.scalars(
