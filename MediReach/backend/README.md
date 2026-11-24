@@ -26,6 +26,17 @@ API docs: http://127.0.0.1:8000/docs. Health: /health.
 
 Feedback accepts only an inventory record ID and a structured outcome (`received` or `not_available`). Free-text fields are rejected at the API boundary to avoid collecting unnecessary personal or health information. Feedback is a review signal only and never changes inventory.
 
+## Availability freshness
+
+The API calculates confidence from the stored `verified_at` timestamp:
+
+- Up to and including 24 hours old: `Recently Verified`
+- More than 24 and up to 72 hours old: `Needs Confirmation`
+- More than 72 hours old: `Outdated`
+- More than five minutes in the future: `Needs Confirmation`
+
+A five-minute future-clock tolerance accounts for small clock skew only. SQLite may return timezone-naive values for `DateTime(timezone=True)` columns; the API interprets these as UTC because all application writes use UTC and returns timezone-aware UTC timestamps to clients.
+
 ## Facility staff inventory updates
 
 - PUT /api/v1/facilities/me/inventory — updates only the facility bound to the supplied X-Facility-Key credential.
