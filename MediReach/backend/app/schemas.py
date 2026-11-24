@@ -63,3 +63,7 @@ class AvailabilityOut(BaseModel):
 
 class MessageOut(BaseModel):
     message: str
+
+
+class HealthOut(BaseModel):
+    status: Literal["ready"]

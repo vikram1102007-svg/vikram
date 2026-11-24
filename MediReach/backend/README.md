@@ -15,7 +15,11 @@ alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
-API docs: http://127.0.0.1:8000/docs. Health: /health.
+API docs: http://127.0.0.1:8000/docs.
+
+- `GET /health` is a liveness probe and does not require the database.
+- `GET /health/ready` executes `SELECT 1` and confirms the connected database is stamped at every Alembic migration head packaged with this API. It returns a generic HTTP 503 if the database is unavailable, has no migration history, or is behind/ahead of the packaged migration graph. It never returns connection details.
+- Run reviewed migrations as a release step before routing traffic to a new API version.
 
 ## Public endpoints
 
@@ -43,6 +47,22 @@ python -m app.issue_facility_key --revoke-key-id 1
 ```
 
 A facility key cannot submit a facility ID; the API derives the facility scope from the key. Revoked keys and keys belonging to inactive facilities are rejected. Each inventory create/update writes an audit event with previous and new status/quantity.
+
+## Container image
+
+The backend image includes the application, Alembic configuration, and migration scripts. It runs as an unprivileged `app` user. The `.dockerignore` file excludes environment files, local databases, virtual environments, and Git metadata from the build context.
+
+From `MediReach/backend`:
+
+```bash
+docker build -t medireach-api .
+# Apply reviewed migrations as a separate release step:
+docker run --rm --env-file .env medireach-api alembic upgrade head
+# Start the API with the same managed environment:
+docker run --rm -p 8000:8000 --env-file .env medireach-api
+```
+
+Do not bake production secrets or a `.env` file into the image. Configure production environment variables through the hosting platform's secret manager. The Dockerfile packaging is covered by CI contract tests; an actual image build must still be performed in a Docker-capable environment before deployment.
 
 ## Database migrations and production deployment
 
