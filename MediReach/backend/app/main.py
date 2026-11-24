@@ -1,10 +1,10 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Path as PathParam, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
@@ -23,8 +23,11 @@ from .schemas import (
     AvailabilityOut,
     FeedbackCreate,
     FeedbackOut,
+    FeedbackReviewActionOut,
+    FeedbackReviewOut,
     HealthOut,
     FacilityOut,
+    InventoryAuditOut,
     InventoryUpsert,
     MedicineOut,
     MessageOut,
@@ -44,7 +47,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
     allow_credentials=False,
-    allow_methods=["GET", "POST", "PUT"],
+    allow_methods=["GET", "POST", "PUT", "PATCH"],
     allow_headers=["Content-Type", "X-Facility-Key"],
 )
 
@@ -55,13 +58,24 @@ def _contains_literal(value: str) -> str:
     return f"%{escaped}%"
 
 
-def freshness(verified_at: datetime) -> str:
-    if verified_at.tzinfo is None:
-        verified_at = verified_at.replace(tzinfo=timezone.utc)
-    age_hours = max(
-        0.0,
-        (datetime.now(timezone.utc) - verified_at.astimezone(timezone.utc)).total_seconds() / 3600,
-    )
+CLOCK_SKEW_TOLERANCE = timedelta(minutes=5)
+
+
+def as_utc(value: datetime) -> datetime:
+    """Normalise timestamps to UTC; naive database values are UTC from app writes."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def freshness(verified_at: datetime, now: datetime | None = None) -> str:
+    timestamp = as_utc(verified_at)
+    current_time = as_utc(now) if now is not None else datetime.now(timezone.utc)
+    age = current_time - timestamp
+    if age < -CLOCK_SKEW_TOLERANCE:
+        return "Needs Confirmation"
+
+    age_hours = max(0.0, age.total_seconds() / 3600)
     if age_hours <= 24:
         return "Recently Verified"
     if age_hours <= 72:
@@ -184,7 +198,7 @@ def search_availability(
             medicine=record.medicine,
             status=record.status,
             quantity=record.quantity,
-            verified_at=record.verified_at,
+            verified_at=as_utc(record.verified_at),
             confidence=freshness(record.verified_at),
             is_demo=record.is_demo,
         )
@@ -254,6 +268,140 @@ def upsert_facility_inventory(
     )
     db.commit()
     return {"message": "Facility inventory saved and audit event recorded"}
+
+
+@app.get(
+    "/api/v1/facilities/me/audit",
+    response_model=list[InventoryAuditOut],
+    tags=["facility staff"],
+)
+def list_facility_audit_history(
+    staff: FacilityStaff = Depends(require_facility_staff),
+    limit: int = Query(default=50, ge=1, le=100),
+    before_id: int | None = Query(default=None, gt=0),
+    db: Session = Depends(get_db),
+):
+    """Return only the authenticated facility's inventory audit events."""
+    stmt = (
+        select(InventoryAuditLog, Medicine)
+        .join(
+            InventoryRecord,
+            InventoryAuditLog.inventory_record_id == InventoryRecord.id,
+        )
+        .join(Medicine, InventoryRecord.medicine_id == Medicine.id)
+        .where(
+            InventoryAuditLog.facility_id == staff.facility_id,
+            InventoryRecord.facility_id == staff.facility_id,
+        )
+        .order_by(InventoryAuditLog.id.desc())
+    )
+    if before_id is not None:
+        stmt = stmt.where(InventoryAuditLog.id < before_id)
+
+    rows = db.execute(stmt.limit(limit)).all()
+    return [
+        InventoryAuditOut(
+            id=audit.id,
+            inventory_record_id=audit.inventory_record_id,
+            medicine_name=medicine.name,
+            medicine_strength=medicine.strength,
+            action=audit.action,
+            previous_status=audit.previous_status,
+            new_status=audit.new_status,
+            previous_quantity=audit.previous_quantity,
+            new_quantity=audit.new_quantity,
+            changed_at=as_utc(audit.changed_at),
+        )
+        for audit, medicine in rows
+    ]
+
+
+@app.get(
+    "/api/v1/facilities/me/feedback",
+    response_model=list[FeedbackReviewOut],
+    tags=["facility staff"],
+)
+def list_facility_feedback_review_queue(
+    staff: FacilityStaff = Depends(require_facility_staff),
+    limit: int = Query(default=50, ge=1, le=100),
+    before_id: int | None = Query(default=None, gt=0),
+    db: Session = Depends(get_db),
+):
+    """Return pending, non-demo feedback signals for the authenticated facility only."""
+    stmt = (
+        select(AvailabilityFeedback, InventoryRecord, Medicine)
+        .join(
+            InventoryRecord,
+            AvailabilityFeedback.inventory_record_id == InventoryRecord.id,
+        )
+        .join(Medicine, InventoryRecord.medicine_id == Medicine.id)
+        .where(
+            InventoryRecord.facility_id == staff.facility_id,
+            InventoryRecord.is_demo.is_(False),
+            AvailabilityFeedback.review_required.is_(True),
+        )
+        .order_by(AvailabilityFeedback.id.desc())
+    )
+    if before_id is not None:
+        stmt = stmt.where(AvailabilityFeedback.id < before_id)
+
+    rows = db.execute(stmt.limit(limit)).all()
+    return [
+        FeedbackReviewOut(
+            id=feedback.id,
+            inventory_record_id=record.id,
+            medicine_name=medicine.name,
+            medicine_strength=medicine.strength,
+            outcome=feedback.outcome,
+            created_at=as_utc(feedback.created_at),
+            review_required=feedback.review_required,
+        )
+        for feedback, record, medicine in rows
+    ]
+
+
+@app.patch(
+    "/api/v1/facilities/me/feedback/{feedback_id}/review",
+    response_model=FeedbackReviewActionOut,
+    tags=["facility staff"],
+)
+def mark_facility_feedback_reviewed(
+    feedback_id: int = PathParam(gt=0),
+    staff: FacilityStaff = Depends(require_facility_staff),
+    db: Session = Depends(get_db),
+):
+    """Acknowledge one feedback signal for the authenticated facility.
+
+    Only review metadata changes; inventory status, quantity and verification
+    time are left untouched. Repeated requests preserve the first reviewer.
+    """
+    feedback = db.scalar(
+        select(AvailabilityFeedback)
+        .join(
+            InventoryRecord,
+            AvailabilityFeedback.inventory_record_id == InventoryRecord.id,
+        )
+        .where(
+            AvailabilityFeedback.id == feedback_id,
+            InventoryRecord.facility_id == staff.facility_id,
+            InventoryRecord.is_demo.is_(False),
+        )
+    )
+    if feedback is None:
+        raise HTTPException(status_code=404, detail="Feedback not found")
+
+    if feedback.review_required:
+        feedback.review_required = False
+        feedback.reviewed_at = datetime.now(timezone.utc)
+        feedback.reviewed_by_access_key_id = staff.access_key_id
+        db.commit()
+        db.refresh(feedback)
+
+    return FeedbackReviewActionOut(
+        id=feedback.id,
+        review_required=feedback.review_required,
+        reviewed_at=as_utc(feedback.reviewed_at) if feedback.reviewed_at else None,
+    )
 
 
 @app.post(

@@ -104,3 +104,7 @@ class AvailabilityFeedback(Base):
     comment: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     review_required: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reviewed_by_access_key_id: Mapped[int | None] = mapped_column(
+        ForeignKey("facility_access_keys.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
