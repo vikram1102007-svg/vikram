@@ -215,7 +215,8 @@ def submit_feedback(payload: FeedbackCreate, db: Session = Depends(get_db)):
     feedback = AvailabilityFeedback(
         inventory_record_id=record.id,
         outcome=payload.outcome,
-        comment=payload.comment,
+        # Do not persist free-text patient comments; structured outcomes are sufficient.
+        comment=None,
         review_required=True,
     )
     db.add(feedback)
