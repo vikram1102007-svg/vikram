@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -49,13 +49,24 @@ def _contains_literal(value: str) -> str:
     return f"%{escaped}%"
 
 
-def freshness(verified_at: datetime) -> str:
-    if verified_at.tzinfo is None:
-        verified_at = verified_at.replace(tzinfo=timezone.utc)
-    age_hours = max(
-        0.0,
-        (datetime.now(timezone.utc) - verified_at.astimezone(timezone.utc)).total_seconds() / 3600,
-    )
+CLOCK_SKEW_TOLERANCE = timedelta(minutes=5)
+
+
+def as_utc(value: datetime) -> datetime:
+    """Normalise timestamps to UTC; naive database values are UTC from app writes."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def freshness(verified_at: datetime, now: datetime | None = None) -> str:
+    timestamp = as_utc(verified_at)
+    current_time = as_utc(now) if now is not None else datetime.now(timezone.utc)
+    age = current_time - timestamp
+    if age < -CLOCK_SKEW_TOLERANCE:
+        return "Needs Confirmation"
+
+    age_hours = max(0.0, age.total_seconds() / 3600)
     if age_hours <= 24:
         return "Recently Verified"
     if age_hours <= 72:
@@ -137,7 +148,7 @@ def search_availability(
             medicine=record.medicine,
             status=record.status,
             quantity=record.quantity,
-            verified_at=record.verified_at,
+            verified_at=as_utc(record.verified_at),
             confidence=freshness(record.verified_at),
             is_demo=record.is_demo,
         )
