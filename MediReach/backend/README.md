@@ -27,6 +27,9 @@ API docs: http://127.0.0.1:8000/docs.
 - GET /api/v1/facilities?district= — active facilities
 - GET /api/v1/availability?medicine=&district=&include_demo=false — availability and server-calculated freshness
 - POST /api/v1/feedback — records a patient feedback review signal; never changes inventory
+- GET /api/v1/facilities/me/audit — authenticated, facility-scoped inventory audit history with cursor pagination
+- GET /api/v1/facilities/me/feedback — authenticated, facility-scoped pending feedback queue with cursor pagination
+- PATCH /api/v1/facilities/me/feedback/{feedback_id}/review — acknowledges a feedback signal without changing stock
 
 Feedback accepts only an inventory record ID and a structured outcome (`received` or `not_available`). Free-text fields are rejected at the API boundary to avoid collecting unnecessary personal or health information. Feedback is a review signal only and never changes inventory.
 
@@ -92,3 +95,26 @@ Store the real database URL in the backend host's secret manager. Do not place i
 Before a pilot, configure HTTPS, managed secrets, backups, monitoring, rate limiting, and an authorised facility inventory source. Confirm migrations against the actual managed PostgreSQL service before routing traffic.
 
 No real facilities or stock are fabricated by this API. Demo records are excluded from availability search by default. Feedback is a review signal and does not change stock. Do not store patient diagnoses, prescriptions, identity documents, or unnecessary sensitive health information. Users must confirm availability directly with the facility. MediReach does not diagnose, prescribe, or recommend medicine substitutions.
+
+
+## Availability freshness
+
+The API calculates confidence from the stored `verified_at` timestamp:
+
+- Up to and including 24 hours old: `Recently Verified`
+- More than 24 and up to 72 hours old: `Needs Confirmation`
+- More than 72 hours old: `Outdated`
+- More than five minutes in the future: `Needs Confirmation`
+
+A five-minute future-clock tolerance accounts for small clock skew only. SQLite may return timezone-naive values for timezone-aware columns; MediReach treats these as UTC because application writes use UTC and returns timezone-aware UTC timestamps to clients.
+
+## Facility audit history and feedback review
+
+All facility staff endpoints derive their facility scope from the authenticated `X-Facility-Key`; clients cannot supply a facility ID to select another facility.
+
+- The audit history returns only audit events whose audit row and inventory record both belong to the authenticated facility.
+- Audit and feedback queues use descending ID cursors (`before_id`) and a bounded page size of 1–100.
+- The feedback queue returns only pending signals for non-demo inventory. It omits free-text fields.
+- `PATCH /api/v1/facilities/me/feedback/{feedback_id}/review` records the first review timestamp and the access-key record that acknowledged it. Repeated acknowledgements are idempotent.
+- Acknowledgement changes only review metadata. Inventory status, quantity and verification time remain unchanged.
+- The additive `0002_feedback_review` migration keeps existing feedback rows and leaves their review metadata null until staff review them. Apply `alembic upgrade head` before deploying the updated API.
