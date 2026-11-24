@@ -51,6 +51,15 @@ app.add_middleware(
     allow_headers=["Content-Type", "X-Facility-Key"],
 )
 
+@app.middleware("http")
+async def prevent_api_response_caching(request, call_next):
+    """Prevent stale public availability and cached facility-staff responses."""
+    response = await call_next(request)
+    if request.url.path.startswith("/api/v1/"):
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+    return response
+
 
 def _contains_literal(value: str) -> str:
     """Build a case-insensitive contains pattern without treating user input as SQL wildcards."""
