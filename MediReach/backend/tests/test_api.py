@@ -1,16 +1,23 @@
 import hashlib
+
+import pytest
 from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
-from app.main import app, freshness, persist_facility_inventory_update
+from app.main import (
+    _inventory_record_lock_query,
+    app,
+    freshness,
+    persist_facility_inventory_update,
+)
 from app.schemas import InventoryUpsert
-from app.security import FacilityStaff
 from app.models import (
     AvailabilityFeedback,
     Facility,
@@ -873,8 +880,6 @@ def test_inventory_create_integrity_failure_without_matching_row_is_not_swallowe
 
     monkeypatch.setattr(request_db, "flush", fail_without_a_competing_insert)
     try:
-        import pytest
-
         with pytest.raises(IntegrityError):
             persist_facility_inventory_update(
                 db=request_db,
@@ -947,7 +952,6 @@ def test_inventory_create_conflict_does_not_promote_competing_demo_record(monkey
 
     monkeypatch.setattr(request_db, "flush", simulate_demo_record_winning)
     try:
-        import pytest
         from fastapi import HTTPException
 
         with pytest.raises(HTTPException) as error:
@@ -976,3 +980,12 @@ def test_inventory_create_conflict_does_not_promote_competing_demo_record(monkey
     assert record.status == "available" and record.quantity == 20
     assert verify_db.scalar(select(InventoryAuditLog)) is None
     verify_db.close()
+
+
+
+def test_inventory_row_lock_query_compiles_to_postgresql_for_update():
+    statement = _inventory_record_lock_query(facility_id=12, medicine_id=34)
+    compiled = str(statement.compile(dialect=postgresql.dialect()))
+    assert "FOR UPDATE" in compiled.upper()
+    assert "facility_id" in compiled
+    assert "medicine_id" in compiled
