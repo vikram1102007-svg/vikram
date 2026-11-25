@@ -105,33 +105,43 @@
     }, safeTimeoutMs);
 
     let response;
+    let payload;
     try {
-      response = await fetchImpl(url, {
-        method: "GET",
-        headers: { Accept: "application/json" },
-        credentials: "omit",
-        cache: "no-store",
-        signal: controller.signal
-      });
-    } catch (_error) {
+      try {
+        response = await fetchImpl(url, {
+          method: "GET",
+          headers: { Accept: "application/json" },
+          credentials: "omit",
+          cache: "no-store",
+          signal: controller.signal
+        });
+      } catch (_error) {
+        if (timedOut) {
+          throw new Error("MediReach API request timed out. Please try again.");
+        }
+        throw new Error("Unable to reach the MediReach API.");
+      }
+
+      if (!response || !response.ok) {
+        const code = response && Number.isInteger(response.status) ? response.status : "unknown";
+        throw new Error("MediReach API request failed (HTTP " + code + ").");
+      }
+
+      try {
+        payload = await response.json();
+      } catch (_error) {
+        if (timedOut) {
+          throw new Error("MediReach API request timed out. Please try again.");
+        }
+        throw new Error("MediReach API returned invalid JSON.");
+      }
+
+      // A response implementation may resolve its body despite an abort signal.
       if (timedOut) {
         throw new Error("MediReach API request timed out. Please try again.");
       }
-      throw new Error("Unable to reach the MediReach API.");
     } finally {
       clearTimeout(timeoutId);
-    }
-
-    if (!response || !response.ok) {
-      const code = response && Number.isInteger(response.status) ? response.status : "unknown";
-      throw new Error("MediReach API request failed (HTTP " + code + ").");
-    }
-
-    let payload;
-    try {
-      payload = await response.json();
-    } catch (_error) {
-      throw new Error("MediReach API returned invalid JSON.");
     }
     return validateAvailabilityRecords(payload);
   }
