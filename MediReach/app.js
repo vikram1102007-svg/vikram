@@ -54,6 +54,9 @@
     searchButton: document.getElementById("search-button"),
     languageToggle: document.getElementById("language-toggle"),
     modeNote: document.getElementById("mode-note"),
+    safetyTitle: document.getElementById("safety-title"),
+    safetyText: document.getElementById("safety-text"),
+    footer: document.getElementById("app-footer"),
     searchStatus: document.getElementById("search-status"),
     results: document.getElementById("results")
   };
@@ -103,6 +106,12 @@
       elements.modeNote.textContent = dictionary.modeDemo;
       elements.modeNote.className = "mode-note mode-note--warning";
     }
+
+    const mode = apiConfig.error ? "configError" : apiConfig.configured ? "api" : "demo";
+    const safety = window.MediReachSafety.getSafetyNotice(language, mode);
+    elements.safetyTitle.textContent = safety.title;
+    elements.safetyText.textContent = safety.text;
+    elements.footer.textContent = safety.footer;
   }
 
   function setBusy(isBusy) {

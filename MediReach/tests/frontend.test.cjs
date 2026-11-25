@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const freshness = require("../freshness.js");
 const api = require("../api.js");
 const locales = require("../locales.js");
+const safety = require("../safety.js");
 
 const HOUR = 60 * 60 * 1000;
 const now = Date.parse("2026-11-23T06:30:00.000Z");
@@ -168,4 +169,25 @@ test("availability timeout remains active while response JSON is being read", as
     }),
     /request timed out/
   );
+});
+
+
+test("safety notice accurately changes between demo, API and invalid configuration modes", () => {
+  for (const language of ["en", "ta"]) {
+    const demo = safety.getSafetyNotice(language, "demo");
+    const apiNotice = safety.getSafetyNotice(language, "api");
+    const configError = safety.getSafetyNotice(language, "configError");
+    assert.ok(demo.text.length > 0);
+    assert.ok(apiNotice.text.length > 0);
+    assert.ok(configError.text.length > 0);
+    assert.notEqual(demo.text, apiNotice.text);
+    assert.notEqual(apiNotice.text, configError.text);
+    assert.ok(configError.text.toLowerCase().includes("api") ||
+      language === "ta");
+  }
+  assert.match(safety.getSafetyNotice("en", "demo").text, /fictional/i);
+  assert.match(safety.getSafetyNotice("en", "api").text, /does not guarantee stock/i);
+  assert.match(safety.getSafetyNotice("en", "configError").text, /not substituted/i);
+  assert.equal(safety.getSafetyNotice("unknown", "api").footer,
+    safety.getSafetyNotice("en", "api").footer);
 });
