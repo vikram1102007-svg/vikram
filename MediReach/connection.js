@@ -37,7 +37,7 @@
     }
     const normalized = api.normalizeApiBase(baseUrl);
     if (!normalized.configured || !normalized.url) {
-      throw new Error("MediReach API URL is not configured correctly.");
+      throw new Error(normalized.error || "MediReach API URL is not configured correctly.");
     }
     if (typeof fetchImpl !== "function" || typeof AbortControllerImpl !== "function") {
       throw new Error("Connection checks are unavailable in this browser.");
