@@ -1,5 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const freshness = require("../freshness.js");
 const api = require("../api.js");
@@ -190,4 +192,12 @@ test("safety notice accurately changes between demo, API and invalid configurati
   assert.match(safety.getSafetyNotice("en", "configError").text, /not substituted/i);
   assert.equal(safety.getSafetyNotice("unknown", "api").footer,
     safety.getSafetyNotice("en", "api").footer);
+});
+
+
+test("main app bootstrap initializes the API readiness indicator after loading its module", () => {
+  const appSource = fs.readFileSync(path.join(__dirname, "../app.js"), "utf8");
+  const html = fs.readFileSync(path.join(__dirname, "../index.html"), "utf8");
+  assert.match(appSource, /MediReachConnection\.init\(document\)/);
+  assert.ok(html.indexOf("connection.js") < html.indexOf("app.js"));
 });
