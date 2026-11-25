@@ -335,4 +335,5 @@
 
   applyTranslations();
   renderInitialState();
+  window.MediReachConnection.init(document);
 })();
