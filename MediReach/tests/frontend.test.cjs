@@ -131,3 +131,20 @@ test("English and Tamil translations contain the required interface labels", () 
   }
   assert.equal(locales.getLocale("unknown").heroTitle, locales.getLocale("en").heroTitle);
 });
+
+
+test("availability request aborts after its timeout and reports a retryable message", async () => {
+  await assert.rejects(
+    api.fetchAvailability({
+      baseUrl: "https://api.example.org",
+      medicine: "Paracetamol",
+      timeoutMs: 10,
+      fetchImpl: (_url, options) => new Promise((_resolve, reject) => {
+        options.signal.addEventListener("abort", () => reject(new Error("aborted")), {
+          once: true
+        });
+      })
+    }),
+    /request timed out/
+  );
+});
