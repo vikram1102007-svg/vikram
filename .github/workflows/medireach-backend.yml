@@ -2,11 +2,11 @@ name: MediReach backend tests
 on:
   push:
     paths:
-      - "MediReach/backend/**"
+      - "MediReach/**"
       - ".github/workflows/medireach-backend.yml"
   pull_request:
     paths:
-      - "MediReach/backend/**"
+      - "MediReach/**"
       - ".github/workflows/medireach-backend.yml"
   workflow_dispatch:
 jobs:
