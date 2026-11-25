@@ -148,3 +148,24 @@ test("availability request aborts after its timeout and reports a retryable mess
     /request timed out/
   );
 });
+
+
+test("availability timeout remains active while response JSON is being read", async () => {
+  await assert.rejects(
+    api.fetchAvailability({
+      baseUrl: "https://api.example.org",
+      medicine: "Paracetamol",
+      timeoutMs: 10,
+      fetchImpl: async (_url, options) => ({
+        ok: true,
+        status: 200,
+        json: () => new Promise((_resolve, reject) => {
+          options.signal.addEventListener("abort", () => reject(new Error("body aborted")), {
+            once: true
+          });
+        })
+      })
+    }),
+    /request timed out/
+  );
+});
