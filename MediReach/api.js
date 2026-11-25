@@ -76,27 +76,50 @@
     return payload;
   }
 
+  const DEFAULT_REQUEST_TIMEOUT_MS = 12000;
+
   async function fetchAvailability({
     baseUrl,
     medicine,
     district = "",
-    fetchImpl = typeof fetch === "function" ? fetch : null
+    fetchImpl = typeof fetch === "function" ? fetch : null,
+    timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS
   }) {
     if (typeof fetchImpl !== "function") {
       throw new Error("Fetch is not available in this browser.");
     }
 
     const url = buildAvailabilityUrl(baseUrl, medicine, district);
+    if (typeof AbortController !== "function") {
+      throw new Error("This browser cannot safely cancel API requests.");
+    }
+
+    const controller = new AbortController();
+    const safeTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0
+      ? timeoutMs
+      : DEFAULT_REQUEST_TIMEOUT_MS;
+    let timedOut = false;
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, safeTimeoutMs);
+
     let response;
     try {
       response = await fetchImpl(url, {
         method: "GET",
         headers: { Accept: "application/json" },
         credentials: "omit",
-        cache: "no-store"
+        cache: "no-store",
+        signal: controller.signal
       });
     } catch (_error) {
+      if (timedOut) {
+        throw new Error("MediReach API request timed out. Please try again.");
+      }
       throw new Error("Unable to reach the MediReach API.");
+    } finally {
+      clearTimeout(timeoutId);
     }
 
     if (!response || !response.ok) {
