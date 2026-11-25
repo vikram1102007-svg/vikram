@@ -22,11 +22,16 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: MediReach/backend/requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
       - run: pip install -r requirements.txt
       - run: python -m compileall -q app tests migrations
       - run: alembic upgrade head
       - run: alembic check
       - run: pytest -q
+      - name: Run MediReach frontend regression tests
+        run: node --test ../tests/*.test.cjs
       - name: Build backend image without publishing
         run: docker build --tag medireach-api:ci .
       - name: Verify image runs as non-root
