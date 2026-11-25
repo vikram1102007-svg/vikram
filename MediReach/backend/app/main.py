@@ -7,7 +7,7 @@ from alembic.script import ScriptDirectory
 from fastapi import Depends, FastAPI, HTTPException, Path as PathParam, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select, text, update
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload
 
 from .config import get_settings
@@ -215,29 +215,40 @@ def search_availability(
     ]
 
 
-@app.put(
-    "/api/v1/facilities/me/inventory",
-    response_model=MessageOut,
-    tags=["facility staff"],
-)
-def upsert_facility_inventory(
+def _inventory_record_lock_query(facility_id: int, medicine_id: int):
+    """Build the facility-scoped row lock used by PostgreSQL inventory writes."""
+    return (
+        select(InventoryRecord)
+        .where(
+            InventoryRecord.facility_id == facility_id,
+            InventoryRecord.medicine_id == medicine_id,
+        )
+        .with_for_update()
+    )
+
+
+def persist_facility_inventory_update(
+    db: Session,
+    facility_id: int,
+    access_key_id: int,
     payload: InventoryUpsert,
-    staff: FacilityStaff = Depends(require_facility_staff),
-    db: Session = Depends(get_db),
-):
-    medicine = db.get(Medicine, payload.medicine_id)
-    if medicine is None:
+) -> None:
+    """Persist one inventory change and its audit event as a single transaction.
+
+    Existing rows are locked on databases that support SELECT FOR UPDATE. If two
+    staff requests race to create the same facility/medicine pair, the unique
+    constraint chooses the first insert; the losing transaction rolls back,
+    locks the winner's row, and records its request as a normal update.
+    """
+    if db.get(Medicine, payload.medicine_id) is None:
         raise HTTPException(status_code=404, detail="Medicine not found")
 
-    record = db.scalar(
-        select(InventoryRecord).where(
-            InventoryRecord.facility_id == staff.facility_id,
-            InventoryRecord.medicine_id == payload.medicine_id,
-        )
-    )
+    record_stmt = _inventory_record_lock_query(facility_id, payload.medicine_id)
+    record = db.scalar(record_stmt)
+
     if record is None:
         record = InventoryRecord(
-            facility_id=staff.facility_id,
+            facility_id=facility_id,
             medicine_id=payload.medicine_id,
             status=payload.status,
             quantity=payload.quantity,
@@ -245,15 +256,43 @@ def upsert_facility_inventory(
             is_demo=False,
         )
         db.add(record)
-        db.flush()
-        action = "created"
-        previous_status = None
-        previous_quantity = None
+        try:
+            # Surface a concurrent unique-key insert before creating its audit row.
+            db.flush()
+            action = "created"
+            previous_status = None
+            previous_quantity = None
+        except IntegrityError:
+            db.rollback()
+            # On PostgreSQL, the conflicting INSERT waits for the winning
+            # transaction. After rollback its committed row can be locked here.
+            record = db.scalar(record_stmt)
+            if record is None:
+                # The integrity failure was not a competing facility/medicine insert.
+                raise
+            if record.is_demo:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Fictional demo inventory must be replaced by an "
+                        "administrator before staff updates"
+                    ),
+                )
+            action = "updated"
+            previous_status = record.status
+            previous_quantity = record.quantity
+            record.status = payload.status
+            record.quantity = payload.quantity
+            record.source = "facility_staff_portal"
+            record.verified_at = datetime.now(timezone.utc)
     else:
         if record.is_demo:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Fictional demo inventory must be replaced by an administrator before staff updates",
+                detail=(
+                    "Fictional demo inventory must be replaced by an "
+                    "administrator before staff updates"
+                ),
             )
         action = "updated"
         previous_status = record.status
@@ -265,9 +304,9 @@ def upsert_facility_inventory(
 
     db.add(
         InventoryAuditLog(
-            facility_id=staff.facility_id,
+            facility_id=facility_id,
             inventory_record_id=record.id,
-            access_key_id=staff.access_key_id,
+            access_key_id=access_key_id,
             action=action,
             previous_status=previous_status,
             new_status=payload.status,
@@ -275,7 +314,29 @@ def upsert_facility_inventory(
             new_quantity=payload.quantity,
         )
     )
-    db.commit()
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        raise
+
+
+@app.put(
+    "/api/v1/facilities/me/inventory",
+    response_model=MessageOut,
+    tags=["facility staff"],
+)
+def upsert_facility_inventory(
+    payload: InventoryUpsert,
+    staff: FacilityStaff = Depends(require_facility_staff),
+    db: Session = Depends(get_db),
+):
+    persist_facility_inventory_update(
+        db=db,
+        facility_id=staff.facility_id,
+        access_key_id=staff.access_key_id,
+        payload=payload,
+    )
     return {"message": "Facility inventory saved and audit event recorded"}
 
 

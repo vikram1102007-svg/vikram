@@ -51,6 +51,8 @@ python -m app.issue_facility_key --revoke-key-id 1
 
 A facility key cannot submit a facility ID; the API derives the facility scope from the key. Revoked keys and keys belonging to inactive facilities are rejected. Each inventory create/update writes an audit event with previous and new status/quantity.
 
+Inventory updates lock an existing facility/medicine row with `SELECT ... FOR UPDATE` so concurrent PostgreSQL updates are serialized and each audit event records the immediately preceding committed values. When two staff requests create the same pair simultaneously, the database's `uq_facility_medicine` constraint selects one insert; the losing request rolls back, locks the newly created row, and records its own payload as an update. The inventory change and its audit event commit in the same transaction. SQLite is used for local tests only and does not provide the same row-locking guarantee; production concurrency behaviour must be verified against the managed PostgreSQL service before a pilot.
+
 ## Container image
 
 The backend image includes the application, Alembic configuration, and migration scripts. It runs as an unprivileged `app` user. The `.dockerignore` file excludes environment files, local databases, virtual environments, and Git metadata from the build context.
