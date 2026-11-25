@@ -27,6 +27,16 @@ jobs:
       - run: alembic upgrade head
       - run: alembic check
       - run: pytest -q
+      - name: Build backend image without publishing
+        run: docker build --tag medireach-api:ci .
+      - name: Verify image runs as non-root
+        run: |
+          image_user="$(docker image inspect medireach-api:ci --format '{{.Config.User}}')"
+          test "$image_user" = "app"
+      - name: Verify packaged migration metadata and facility-key CLI
+        run: |
+          docker run --rm medireach-api:ci alembic heads
+          docker run --rm medireach-api:ci python -m app.issue_facility_key --help
 
   postgres-integration:
     runs-on: ubuntu-latest
