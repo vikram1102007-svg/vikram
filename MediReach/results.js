@@ -3,9 +3,9 @@
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (root) root.MediReachResults = api;
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
-  function freshnessKey(record, freshnessApi) {
+  function freshnessKey(record, freshnessApi, nowMs) {
     if (!freshnessApi || typeof freshnessApi.getFreshness !== "function") return "confirm";
-    return freshnessApi.getFreshness(record && record.verified_at).key;
+    return freshnessApi.getFreshness(record && record.verified_at, nowMs).key;
   }
 
   function timestamp(record, freshnessApi) {
@@ -18,12 +18,13 @@
     const status = filters.status || "all";
     const freshness = filters.freshness || "all";
     const sort = filters.sort || "newest";
+    const nowMs = Number.isFinite(filters.nowMs) ? filters.nowMs : undefined;
 
     return records
       .map((record, index) => ({ record, index }))
       .filter(({ record }) => {
         if (status !== "all" && record.status !== status) return false;
-        if (freshness !== "all" && freshnessKey(record, freshnessApi) !== freshness) return false;
+        if (freshness !== "all" && freshnessKey(record, freshnessApi, nowMs) !== freshness) return false;
         return true;
       })
       .sort((left, right) => {
