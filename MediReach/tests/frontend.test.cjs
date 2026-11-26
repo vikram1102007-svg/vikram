@@ -7,6 +7,7 @@ const freshness = require("../freshness.js");
 const api = require("../api.js");
 const locales = require("../locales.js");
 const safety = require("../safety.js");
+const results = require("../results.js");
 
 const HOUR = 60 * 60 * 1000;
 const now = Date.parse("2026-11-23T06:30:00.000Z");
@@ -200,4 +201,49 @@ test("main app bootstrap initializes the API readiness indicator after loading i
   const html = fs.readFileSync(path.join(__dirname, "../index.html"), "utf8");
   assert.match(appSource, /MediReachConnection\.init\(document\)/);
   assert.ok(html.indexOf("connection.js") < html.indexOf("app.js"));
+});
+
+test("availability filters and sorting are dynamic, stable, and do not mutate API records", () => {
+  const records = [
+    { status: "available", verified_at: "2026-11-22T10:00:00Z" },
+    { status: "low_stock", verified_at: "2026-11-23T10:00:00Z" },
+    { status: "available", verified_at: "2026-11-20T10:00:00Z" },
+    { status: "not_reported", verified_at: "bad-date" }
+  ];
+  const originalOrder = records.slice();
+
+  const newest = results.filterAndSort(records, { sort: "newest" }, freshness);
+  assert.deepEqual(newest.map((record) => record.status),
+    ["low_stock", "available", "available", "not_reported"]);
+  assert.deepEqual(records, originalOrder);
+
+  const available = results.filterAndSort(records, {
+    status: "available",
+    freshness: "all",
+    sort: "oldest"
+  }, freshness);
+  assert.deepEqual(available, [records[2], records[0]]);
+
+  const outdated = results.filterAndSort(records, {
+    freshness: "outdated",
+    sort: "newest"
+  }, freshness);
+  assert.deepEqual(outdated, [records[2]]);
+
+  const noMatch = results.filterAndSort(records, {
+    status: "unavailable",
+    freshness: "all"
+  }, freshness);
+  assert.deepEqual(noMatch, []);
+});
+
+test("dynamic filter controls are translated and included before the results region", () => {
+  const html = fs.readFileSync(path.join(__dirname, "../index.html"), "utf8");
+  const appSource = fs.readFileSync(path.join(__dirname, "../app.js"), "utf8");
+  for (const id of ["stock-filter", "freshness-filter", "sort-filter"]) {
+    assert.match(html, new RegExp('id="' + id + '"'));
+    assert.match(appSource, new RegExp('getElementById\\("' + id + '"\\)'));
+  }
+  assert.ok(html.indexOf("results.js") < html.indexOf("app.js"));
+  assert.match(appSource, /MediReachResults\.filterAndSort/);
 });
