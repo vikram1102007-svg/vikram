@@ -61,3 +61,11 @@ node --test tests/frontend.test.cjs
 The backend is not yet deployed or connected to a production database. No government inventory system, SMS/IVR service, or authorised facility data source is connected. The current static frontend uses fictional demo data unless an API URL is explicitly configured and successfully responds.
 
 Availability is informational and must be confirmed with the facility. Patient feedback creates a review signal and never changes stock. MediReach does not diagnose, prescribe, or recommend medicine substitutions. Do not enter personal health information in feedback.
+
+## API connection readiness
+
+When the HTTPS API origin is configured in the `medireach-api-base` meta tag, the page initialises a bilingual connection indicator. It makes a read-only `GET /health/ready` request with an 8-second timeout, `credentials: omit`, and `cache: no-store`. If the request fails or the response does not report `status: "ready"`, the indicator shows the API/database as unavailable and offers a retry. It never replaces failed API results with fictional sample inventory.
+
+The readiness endpoint checks database connectivity and that the deployed database is at the packaged Alembic migration head. A ready response **does not mean that a facility has verified a medicine or that any stock is available**. Availability records still show their own verification timestamp and rule-based freshness label, and must be confirmed with the facility.
+
+The indicator is hidden when the API origin is blank (demo mode) or invalid. For a production connection, configure the backend's `CORS_ORIGINS` with the exact origin `https://medireach-platform.embarko.app` (no path or trailing slash). Keep the API origin public and non-secret; never put a facility key or database credential in the static frontend.
