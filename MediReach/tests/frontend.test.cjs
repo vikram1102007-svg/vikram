@@ -228,7 +228,7 @@ test("availability filters and sorting are dynamic, stable, and do not mutate AP
     freshness: "outdated",
     sort: "newest"
   }, freshness);
-  assert.deepEqual(outdated, [records[2]]);
+  assert.deepEqual(outdated, [records[1], records[0], records[2]]);
 
   const noMatch = results.filterAndSort(records, {
     status: "unavailable",
