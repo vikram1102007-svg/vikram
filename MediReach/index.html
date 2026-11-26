@@ -54,6 +54,35 @@
 
       <p id="mode-note" class="mode-note" role="status" aria-live="polite"></p>
       <p id="search-status" class="search-status" role="status" aria-live="polite"></p>
+      <div id="result-controls" class="result-controls" hidden>
+        <div class="filter-field">
+          <label for="stock-filter" data-i18n="stockFilterLabel">Reported stock status</label>
+          <select id="stock-filter">
+            <option value="all" data-i18n="filterAll">All statuses</option>
+            <option value="available" data-i18n="stockAvailable">Available</option>
+            <option value="low_stock" data-i18n="stockLow">Low stock</option>
+            <option value="unavailable" data-i18n="stockUnavailable">Unavailable</option>
+            <option value="not_reported" data-i18n="stockNotReported">Not reported</option>
+          </select>
+        </div>
+        <div class="filter-field">
+          <label for="freshness-filter" data-i18n="freshnessFilterLabel">Verification freshness</label>
+          <select id="freshness-filter">
+            <option value="all" data-i18n="filterAll">All statuses</option>
+            <option value="recent" data-i18n="freshnessRecent">Recently verified</option>
+            <option value="confirm" data-i18n="freshnessConfirm">Needs confirmation</option>
+            <option value="outdated" data-i18n="freshnessOutdated">Outdated</option>
+          </select>
+        </div>
+        <div class="filter-field">
+          <label for="sort-filter" data-i18n="sortLabel">Sort by verification time</label>
+          <select id="sort-filter">
+            <option value="newest" data-i18n="sortNewest">Newest first</option>
+            <option value="oldest" data-i18n="sortOldest">Oldest first</option>
+          </select>
+        </div>
+        <p id="filter-status" class="filter-status" role="status" aria-live="polite"></p>
+      </div>
       <div id="results" class="results" aria-live="polite" aria-busy="false"></div>
     </section>
 
@@ -84,6 +113,7 @@
   <footer id="app-footer">MediReach · Public-health information demo</footer>
 
   <script src="freshness.js"></script>
+  <script src="results.js"></script>
   <script src="locales.js"></script>
   <script src="api.js"></script>
   <script src="safety.js"></script>
