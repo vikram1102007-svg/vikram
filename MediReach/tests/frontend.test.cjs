@@ -211,6 +211,7 @@ test("availability filters and sorting are dynamic, stable, and do not mutate AP
     { status: "not_reported", verified_at: "bad-date" }
   ];
   const originalOrder = records.slice();
+  const referenceNow = Date.parse("2026-11-26T06:00:00.000Z");
 
   const newest = results.filterAndSort(records, { sort: "newest" }, freshness);
   assert.deepEqual(newest.map((record) => record.status),
@@ -226,9 +227,17 @@ test("availability filters and sorting are dynamic, stable, and do not mutate AP
 
   const outdated = results.filterAndSort(records, {
     freshness: "outdated",
-    sort: "newest"
+    sort: "newest",
+    nowMs: referenceNow
   }, freshness);
-  assert.deepEqual(outdated, [records[1], records[0], records[2]]);
+  assert.deepEqual(outdated, [records[0], records[2]]);
+
+  const needsConfirmation = results.filterAndSort(records, {
+    freshness: "confirm",
+    sort: "newest",
+    nowMs: referenceNow
+  }, freshness);
+  assert.deepEqual(needsConfirmation, [records[1], records[3]]);
 
   const noMatch = results.filterAndSort(records, {
     status: "unavailable",
