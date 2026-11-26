@@ -8,6 +8,7 @@ Medicine-availability information project with a responsive static frontend and 
 - `freshness.js` — timestamp-based, rule-based freshness labels
 - `locales.js` — English and Tamil interface translations
 - `api.js` — optional read-only availability API client
+- `results.js` — client-side filtering by reported stock/freshness and verification-time sorting
 - `backend/` — FastAPI API, SQLAlchemy models, facility-scoped inventory credentials, audit logging, migrations, and tests
 - `tests/frontend.test.cjs` — frontend unit tests run through the backend pytest suite
 
@@ -24,6 +25,14 @@ To connect a deployed API, set the `content` value of this meta tag in `index.ht
 The frontend calls the public read-only endpoint `GET /api/v1/availability?medicine=...` and optionally sends `district=...`. The API must allow the exact Embarko frontend origin in its CORS configuration. Do not put database URLs, facility keys, or any other secrets in frontend files.
 
 If the API URL is configured but the request fails, the UI shows an error and does **not** silently substitute fictional demo results. Remote API URLs must use HTTPS; plain HTTP is accepted only for localhost development.
+
+## Interactive search
+
+After a search, the results can be filtered by reported stock status and verification freshness, then sorted by last-verified time. These controls operate on the current response in the browser and do not make another API request. Changing filters never changes inventory or the API's confidence label. Invalid or missing timestamps remain in the confirmation category and sort after valid timestamps.
+
+## Vercel deployment architecture
+
+The current frontend is a static, interactive website and can be deployed as a Vercel project from the `MediReach` directory. The FastAPI backend and PostgreSQL database are separate services until a supported serverless entrypoint, database connection, migrations, and health checks are configured. Do not deploy facility keys or database credentials to the frontend. Configure a public HTTPS API origin only after the backend is deployed and `/health/ready` is verified.
 
 ## Freshness and safety behaviour
 

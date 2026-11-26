@@ -58,7 +58,12 @@
     safetyText: document.getElementById("safety-text"),
     footer: document.getElementById("app-footer"),
     searchStatus: document.getElementById("search-status"),
-    results: document.getElementById("results")
+    results: document.getElementById("results"),
+    resultControls: document.getElementById("result-controls"),
+    stockFilter: document.getElementById("stock-filter"),
+    freshnessFilter: document.getElementById("freshness-filter"),
+    sortFilter: document.getElementById("sort-filter"),
+    filterStatus: document.getElementById("filter-status")
   };
 
   const apiConfig = window.MediReachApi.normalizeApiBase(
@@ -220,12 +225,30 @@
     const dictionary = messages();
     elements.results.replaceChildren();
     if (!records.length) {
+      elements.resultControls.hidden = true;
+      elements.filterStatus.textContent = "";
       elements.searchStatus.textContent = "";
       showMessage(dictionary.noResults);
       return;
     }
-    elements.searchStatus.textContent = dictionary.resultsCount.replace("{count}", String(records.length));
-    records.forEach(renderRecord);
+
+    elements.resultControls.hidden = false;
+    const visibleRecords = window.MediReachResults.filterAndSort(records, {
+      status: elements.stockFilter.value,
+      freshness: elements.freshnessFilter.value,
+      sort: elements.sortFilter.value
+    }, window.MediReachFreshness);
+
+    elements.searchStatus.textContent = dictionary.filteredResultsCount
+      .replace("{visible}", String(visibleRecords.length))
+      .replace("{total}", String(records.length));
+    elements.filterStatus.textContent = dictionary.filtersLocalNote;
+
+    if (!visibleRecords.length) {
+      showMessage(dictionary.noFilteredResults);
+      return;
+    }
+    visibleRecords.forEach(renderRecord);
   }
 
   function searchDemo(medicineQuery, districtQuery) {
@@ -272,6 +295,11 @@
 
     searched = true;
     lastErrorKey = null;
+    elements.stockFilter.value = "all";
+    elements.freshnessFilter.value = "all";
+    elements.sortFilter.value = "newest";
+    elements.resultControls.hidden = true;
+    elements.filterStatus.textContent = "";
     elements.searchStatus.textContent = dictionary.loading;
     elements.results.replaceChildren();
     setBusy(true);
@@ -298,12 +326,15 @@
     lastErrorKey = messageKey;
     lastRecords = null;
     searched = true;
+    elements.resultControls.hidden = true;
+    elements.filterStatus.textContent = "";
     elements.searchStatus.textContent = message;
     showMessage(message, "error-message");
   }
 
   function renderInitialState() {
     if (!searched) {
+      elements.resultControls.hidden = true;
       elements.searchStatus.textContent = "";
       showMessage(messages().emptyInitial);
     }
@@ -318,6 +349,12 @@
     button.addEventListener("click", () => {
       elements.medicine.value = button.getAttribute("data-q");
       elements.form.requestSubmit();
+    });
+  });
+
+  [elements.stockFilter, elements.freshnessFilter, elements.sortFilter].forEach((control) => {
+    control.addEventListener("change", () => {
+      if (searched && lastRecords && !lastErrorKey) renderRecords(lastRecords);
     });
   });
 
